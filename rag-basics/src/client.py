@@ -1,8 +1,6 @@
 import os
-os.environ.pop('all_proxy', None)
-os.environ.pop('ALL_PROXY', None)
-
 from pathlib import Path
+
 from dotenv import load_dotenv
 from openai import OpenAI
 
