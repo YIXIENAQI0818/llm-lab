@@ -24,11 +24,6 @@ class EmbeddingStore:
         self._model = EmbeddingStore._singleton_model
         self._collections: dict[str, list[dict]] = {}
 
-    @classmethod
-    def share(cls, model_name: str = "BAAI/bge-small-zh-v1.5"):
-        """创建共享同一模型的实例（工厂方法，语义更清晰）。"""
-        return cls(model_name)
-
     # ---- 写入 ----
 
     def add(self, collection: str, text: str, meta: dict | None = None):
@@ -97,6 +92,19 @@ class EmbeddingStore:
         va = self._model.encode(a, normalize_embeddings=True)
         vb = self._model.encode(b, normalize_embeddings=True)
         return float(va @ vb)
+
+    # ---- 单条修改 ----
+
+    def update(self, collection: str, index: int, text: str, meta: dict | None = None):
+        """更新 collection 中第 index 条（只重编码这一条）。"""
+        vec = self._model.encode(text, normalize_embeddings=True)
+        self._collections[collection][index] = {
+            "text": text, "meta": meta or {}, "vec": vec,
+        }
+
+    def delete(self, collection: str, index: int):
+        """删除 collection 中第 index 条。"""
+        del self._collections[collection][index]
 
     # ---- 工具 ----
 

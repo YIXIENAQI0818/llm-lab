@@ -17,10 +17,12 @@ class LongTermMemory:
     _SIMILARITY_THRESHOLD = 0.75  # embedding 余弦相似度阈值（短中文文本偏高）
     _MIN_SCORE_THRESHOLD = 0.3   # 检索时低于此值的记忆不返回
 
-    def __init__(self, embedding_store: EmbeddingStore | None = None, storage_dir: str = "agent_memory"):
+    def __init__(self, embedding_store: EmbeddingStore, storage_dir: str = "agent_memory",
+                 llm_client=None):
         self._dir = Path(storage_dir)
         self._file = self._dir / "agent_memory.json"
-        self._embedding = embedding_store if embedding_store is not None else EmbeddingStore()
+        self._embedding = embedding_store
+        self._llm = llm_client
         self._memories: list[dict] = []
 
         self._dir.mkdir(parents=True, exist_ok=True)
@@ -42,12 +44,16 @@ class LongTermMemory:
         now = datetime.now().isoformat(timespec="seconds")
 
         # embedding 相似度去重
-        for m in self._memories:
+        for idx, m in enumerate(self._memories):
             if self._content_similarity(content, m["content"]) >= self._SIMILARITY_THRESHOLD:
-                m["content"] = content
+                if self._llm:
+                    merged = self._merge_pair(m["content"], content)
+                else:
+                    merged = content
+                m["content"] = merged
                 m["timestamp"] = now
                 self._save()
-                self._rebuild_embedding_index()
+                self._embedding.update("memories", idx, merged, {"timestamp": now})
                 return False
 
         self._memories.append({"content": content, "timestamp": now})
@@ -60,7 +66,7 @@ class LongTermMemory:
         if 0 <= index < len(self._memories):
             self._memories.pop(index)
             self._save()
-            self._rebuild_embedding_index()
+            self._embedding.delete("memories", index)
 
     # ---- 读取 ----
 
@@ -155,6 +161,22 @@ class LongTermMemory:
     def _content_similarity(self, a: str, b: str) -> float:
         """两条记忆文本的语义相似度（0~1）。"""
         return self._embedding.similarity(a, b)
+
+    _MERGE_PAIR_PROMPT = (
+        "你是记忆整理助手。以下是两条关于同一个事实的长期记忆，旧记忆和新记忆有重叠但不完全一样。"
+        "请将它们合并成一条简洁的记忆（一句话，中文），保留双方各自独有的重要信息。"
+        "直接输出合并后的记忆文本，不要加任何前缀或标点包裹。"
+    )
+
+    def _merge_pair(self, old: str, new: str) -> str:
+        """用 LLM 将新旧记忆合并为一条。"""
+        messages = [
+            {"role": "system", "content": self._MERGE_PAIR_PROMPT},
+            {"role": "user", "content": f"旧记忆：{old}\n\n新记忆：{new}"},
+        ]
+        response = self._llm.chat(messages)
+        merged = response.choices[0].message.content.strip()
+        return merged or new  # LLM 返回空则保留新的
 
     def _rebuild_embedding_index(self):
         """从当前记忆列表重建 EmbeddingStore 中的 memories collection。"""

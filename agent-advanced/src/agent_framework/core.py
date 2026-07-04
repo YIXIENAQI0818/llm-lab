@@ -1,6 +1,7 @@
 import json
 import re
 
+from .embedding_store import EmbeddingStore
 from .llm import LLMClient
 from .memory import ConversationMemory
 from .tools import ToolRegistry

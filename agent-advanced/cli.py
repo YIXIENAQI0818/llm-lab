@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from src.agent_framework import Agent, EmbeddingStore
+from src.agent_framework import Agent, EmbeddingStore, LLMClient
 from src.capabilities import LongTermMemory, PlanManager
 from src.capabilities.demo_tools import create_demo_tools
 
@@ -22,6 +22,7 @@ SYSTEM_PROMPT = (
     "你是一个有用的 AI 助手，可以用中文或用户使用的语言回复。"
     "需要时使用工具获取信息。"
     "当用户告诉你关于自己的重要信息（名字、偏好、计划等）时，主动调用 save_memory 保存。"
+    "如果用户的信息是对已有记忆的更新（而非完全新的事实），存入的内容应同时包含新旧信息，不要丢失旧记忆中的重要事实。"
     "当面对需要多步协调的复杂任务时，先调用 make_plan 制定计划，再逐步执行。"
     "在给出最终答案前，请先自我检查：数据是否准确？逻辑是否完整？是否有遗漏？如果发现问题，先修正再回答。"
 )
@@ -36,15 +37,19 @@ def main():
     parser.add_argument("--no-memory", action="store_true", help="不启用长期记忆")
     args = parser.parse_args()
 
-    # 创建共享的 EmbeddingStore，同时传给 Agent(ToolRegistry) 和 LTM
+    # 创建共享的基础设施
     embedding_store = EmbeddingStore()
+    llm_client = LLMClient()
 
-    ltm = None if args.no_memory else LongTermMemory(embedding_store=embedding_store)
+    ltm = None if args.no_memory else LongTermMemory(
+        embedding_store=embedding_store, llm_client=llm_client,
+    )
     plan_mgr = PlanManager()
 
     tools = [] if args.no_tools else create_demo_tools(plan_mgr=plan_mgr, ltm=ltm)
 
     agent = Agent(
+        llm=llm_client,
         tools=tools, system_prompt=SYSTEM_PROMPT,
         long_term_memory=ltm, plan_mgr=plan_mgr,
         tool_top_k=5, embedding_store=embedding_store,

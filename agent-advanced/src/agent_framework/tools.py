@@ -10,9 +10,9 @@ class ToolRegistry:
     支持基于 embedding 的工具过滤：工具多时，只把语义最相关的发给 LLM。
     """
 
-    def __init__(self, embedding_store: EmbeddingStore | None = None, tools: list[dict] | None = None):
+    def __init__(self, embedding_store: EmbeddingStore, tools: list[dict] | None = None):
         self._tools: dict[str, dict] = {}
-        self._embedding = embedding_store if embedding_store is not None else EmbeddingStore()
+        self._embedding = embedding_store
         if tools:
             for t in tools:
                 self.register(**t)
