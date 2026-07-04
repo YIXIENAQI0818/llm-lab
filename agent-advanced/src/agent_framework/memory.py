@@ -5,16 +5,24 @@ class ConversationMemory:
     """对话历史管理器，提供短期记忆能力。
 
     消息以 OpenAI 原生格式存储，与 API 对齐。
-    使用 tiktoken 精确计数 token，支持超限自动裁剪。
+    使用 tiktoken 精确计数 token，支持超限自动裁剪 + LLM 摘要压缩。
     """
 
     _enc = tiktoken.get_encoding("cl100k_base")
-    # 每条消息的固定结构开销（role + 标点等），粗估 ~4 token
     _MSG_OVERHEAD = 4
 
-    def __init__(self, system_prompt: str | None = None, max_tokens: int | None = None):
+    SUMMARIZE_PROMPT = (
+        "请用一段简洁的文字（2-3句话）摘要以下对话历史，"
+        "保留关键信息（人物、事件、决策、数字、偏好等），省略寒暄和重复内容。"
+        "如果之前已经有摘要，新摘要应和旧摘要合并，不要重复相同信息。"
+    )
+
+    def __init__(self, system_prompt: str | None = None, max_tokens: int | None = None,
+                 llm_client=None):
         self._messages: list[dict] = []
         self.max_tokens = max_tokens
+        self._llm = llm_client
+        self._summary = ""
         if system_prompt:
             self.add_system(system_prompt)
 
@@ -67,8 +75,13 @@ class ConversationMemory:
         if self._messages and self._messages[0]["role"] == "system":
             sp = self._messages[0]["content"]
         self._messages = []
+        self._summary = ""
         if sp:
             self.add_system(sp)
+
+    @property
+    def summary(self) -> str:
+        return self._summary
 
     # ---- Token 计数 ----
 
@@ -80,20 +93,21 @@ class ConversationMemory:
         return {
             "n_messages": len(self._messages),
             "tokens": self.token_count(),
+            "summary_tokens": len(self._enc.encode(self._summary)) if self._summary else 0,
         }
 
     # ---- 裁剪 ----
 
     def trim(self, max_tokens: int):
-        """裁剪到 max_tokens 以内，保留 system prompt + 最近消息。"""
+        """纯裁剪（无 LLM 时用），保留 system prompt + 最近消息。"""
         start = 1 if self._messages and self._messages[0]["role"] == "system" else 0
         while self._count_tokens(self._messages) > max_tokens and len(self._messages) > start + 1:
             self._messages.pop(start)
+            self._clean_tool_orphans(start)
 
     # ---- 内部 ----
 
     def _count_tokens(self, messages: list[dict]) -> int:
-        """对消息列表做精确 token 计数。"""
         total = 0
         for m in messages:
             total += self._MSG_OVERHEAD
@@ -108,9 +122,48 @@ class ConversationMemory:
                 total += len(self._enc.encode(m["tool_call_id"]))
         return total
 
+    def _clean_tool_orphans(self, start: int):
+        """删除 start 位置开始的孤立 tool 消息（assistant tool_calls 已被裁）。"""
+        while start < len(self._messages) and self._messages[start].get("role") == "tool":
+            self._messages.pop(start)
+
     def _auto_trim(self):
-        if self.max_tokens is not None:
+        if self.max_tokens is None:
+            return
+        if self._llm:
+            self._summarize_and_trim()
+        else:
             self.trim(self.max_tokens)
+
+    def _summarize_and_trim(self):
+        """裁剪前把被删消息发给 LLM 摘要，结果累积到 _summary。"""
+        start = 1 if self._messages and self._messages[0]["role"] == "system" else 0
+
+        # 收集需要被删的消息
+        to_remove = []
+        while self._count_tokens(self._messages) > self.max_tokens and len(self._messages) > start + 1:
+            to_remove.append(self._messages.pop(start))
+            self._clean_tool_orphans(start)
+
+        if not to_remove:
+            return
+
+        # 拼接被删消息
+        text = "\n".join(
+            f"{m['role']}: {m.get('content', '')[:300]}"
+            for m in to_remove
+        )
+
+        # LLM 摘要
+        prompt = f"已有的摘要：{self._summary}\n\n新增对话：\n{text}" if self._summary else text
+        try:
+            response = self._llm.chat([
+                {"role": "system", "content": self.SUMMARIZE_PROMPT},
+                {"role": "user", "content": f"请摘要：\n\n{prompt}"},
+            ])
+            self._summary = response.choices[0].message.content.strip()
+        except Exception:
+            pass  # 摘要失败不影响主流程
 
 
 def _strip_nones(messages: list[dict]) -> list[dict]:

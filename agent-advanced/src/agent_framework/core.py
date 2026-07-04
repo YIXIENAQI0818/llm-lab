@@ -35,7 +35,8 @@ class Agent:
         max_tokens: int | None = None,
     ):
         self.llm = llm or LLMClient()
-        self.memory = ConversationMemory(system_prompt, max_tokens=max_tokens)
+        self.memory = ConversationMemory(system_prompt, max_tokens=max_tokens,
+                                         llm_client=self.llm)
 
         es = embedding_store if embedding_store is not None else EmbeddingStore()
         self.tools = ToolRegistry(es, tools)
@@ -90,6 +91,8 @@ class Agent:
     def _collect_fixed_context(self, user_input: str) -> list[str]:
         """收集本轮 chat 不变的上下文块（记忆等），只算一次。"""
         blocks = []
+        if self.memory.summary:
+            blocks.append(f"[对话摘要]\n{self.memory.summary}")
         if self.ltm:
             recalled = self.ltm.search(user_input, top_k=3)
             if recalled:
