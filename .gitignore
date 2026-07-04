@@ -4,3 +4,4 @@ __pycache__/
 CLAUDE.md
 memory/
 agent_memory/
+**/agent_memory/
