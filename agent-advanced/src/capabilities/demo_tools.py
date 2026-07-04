@@ -56,8 +56,16 @@ def _make_plan_stub(task: str, steps: list) -> str:
     return "计划已创建"
 
 
-def _update_plan_stub(action: str, changes: str = "") -> str:
-    return "计划已更新"
+def _complete_step_stub(step: int) -> str:
+    return "步骤已完成"
+
+
+def _add_plan_step_stub(desc: str) -> str:
+    return "步骤已追加"
+
+
+def _modify_plan_step_stub(step: int, desc: str) -> str:
+    return "步骤已修改"
 
 
 # ============================================================
@@ -133,17 +141,37 @@ def create_demo_tools(plan_mgr=None, ltm=None) -> list[dict]:
             "fn": _make_plan_stub,
         },
         {
-            "name": "update_plan",
-            "description": "更新当前计划：complete_step n | add_step 内容 | modify_step n 新内容",
+            "name": "complete_step",
+            "description": "标记当前计划的一个步骤为完成。完成后自动推进到下一步。",
+            "parameters": {
+                "type": "object",
+                "properties": {"step": {"type": "integer", "description": "要标记完成的步骤编号（从1开始）"}},
+                "required": ["step"],
+            },
+            "fn": _complete_step_stub,
+        },
+        {
+            "name": "add_plan_step",
+            "description": "向当前计划追加一个新步骤。",
+            "parameters": {
+                "type": "object",
+                "properties": {"desc": {"type": "string", "description": "新步骤描述"}},
+                "required": ["desc"],
+            },
+            "fn": _add_plan_step_stub,
+        },
+        {
+            "name": "modify_plan_step",
+            "description": "修改当前计划中某个步骤的描述。",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "description": "操作类型和参数"},
-                    "changes": {"type": "string", "description": "具体变更内容"},
+                    "step": {"type": "integer", "description": "要修改的步骤编号（从1开始）"},
+                    "desc": {"type": "string", "description": "新的步骤描述"},
                 },
-                "required": ["action"],
+                "required": ["step", "desc"],
             },
-            "fn": _update_plan_stub,
+            "fn": _modify_plan_step_stub,
         },
     ]
 
@@ -173,12 +201,26 @@ def create_demo_tools(plan_mgr=None, ltm=None) -> list[dict]:
                 return f"计划已创建（已保存到文件）：\n{steps_text}\n\n请按顺序执行第一步。"
             t["fn"] = _make_plan
 
-        elif t["name"] == "update_plan":
-            def _update_plan(action, changes="", _pm=plan_mgr):
+        elif t["name"] == "complete_step":
+            def _complete_step(step, _pm=plan_mgr):
                 if not _pm:
                     return "计划功能未启用"
-                return _pm.update(action, changes)
-            t["fn"] = _update_plan
+                return _pm.complete_step(step)
+            t["fn"] = _complete_step
+
+        elif t["name"] == "add_plan_step":
+            def _add_ps(desc, _pm=plan_mgr):
+                if not _pm:
+                    return "计划功能未启用"
+                return _pm.add_step(desc)
+            t["fn"] = _add_ps
+
+        elif t["name"] == "modify_plan_step":
+            def _modify_ps(step, desc, _pm=plan_mgr):
+                if not _pm:
+                    return "计划功能未启用"
+                return _pm.modify_step(step, desc)
+            t["fn"] = _modify_ps
 
     return tools
 

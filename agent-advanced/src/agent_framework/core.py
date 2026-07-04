@@ -17,7 +17,7 @@ def _sanitize(text: str) -> str:
 class Agent:
     """Agent 主循环。
 
-    组装 LLM、Memory、Tools、PlanManager、LongTermMemory，
+    组装 LLM、Memory、Tools，以及外部注入的能力（LTM、PlanManager）。
     对外暴露简洁的 chat() 接口。
     """
 
@@ -35,34 +35,20 @@ class Agent:
         self.tools = ToolRegistry(tools)
         self.max_rounds = max_rounds
         self.ltm = long_term_memory
-        if plan_mgr is None:
-            from ..capabilities.plan_manager import PlanManager
-            plan_mgr = PlanManager()
         self.plan_mgr = plan_mgr
+        self._base_system = system_prompt or ""
 
     def chat(self, user_input: str, verbose: bool = True) -> str:
-        """执行一轮对话，返回最终回复。
-
-        Args:
-            user_input: 用户输入
-            verbose: 是否在工具调用时打印过程
-
-        Returns:
-            模型的最终文本回复
-        """
-        # 长期记忆检索
-        if self.ltm:
-            recalled = self.ltm.search(user_input, top_k=3)
-            if recalled:
-                context = "\n".join(f"- {r['content']}" for r in recalled)
-                user_input = f"相关记忆：\n{context}\n\n用户问题：{user_input}"
-
-        # 活跃计划注入
-        user_input = self.plan_mgr.inject(user_input)
-
+        """执行一轮对话，返回最终回复。"""
         self.memory.add_user(user_input)
 
+        # 固定上下文：只和 user_input 有关，循环中不变
+        fixed_blocks = self._collect_fixed_context(user_input)
+
         for _ in range(self.max_rounds):
+            # 动态上下文：plan 状态每轮可能变化，需要实时刷新
+            self._rebuild_system(fixed_blocks)
+
             response = self.llm.chat(
                 self.memory.get_messages(),
                 tools=self.tools.get_definitions(),
@@ -88,3 +74,27 @@ class Agent:
     def reset(self):
         """清空对话历史，保留 system prompt 和已注册的工具。"""
         self.memory.clear()
+
+    # ---- 内部 ----
+
+    def _collect_fixed_context(self, user_input: str) -> list[str]:
+        """收集本轮 chat 不变的上下文块（记忆等），只算一次。"""
+        blocks = []
+        if self.ltm:
+            recalled = self.ltm.search(user_input, top_k=3)
+            if recalled:
+                lines = "\n".join(f"- {r['content']}" for r in recalled)
+                blocks.append(f"[记忆]\n{lines}")
+        return blocks
+
+    def _rebuild_system(self, fixed_blocks: list[str]):
+        """用固定上下文 + 最新 plan 状态重建 system prompt（每轮调用）。"""
+        blocks = list(fixed_blocks)
+        if self.plan_mgr and self.plan_mgr.is_active:
+            blocks.append(self.plan_mgr.format_context())
+
+        full = self._base_system
+        if blocks:
+            full += "\n\n" + "\n\n".join(blocks)
+
+        self.memory.add_system(full)

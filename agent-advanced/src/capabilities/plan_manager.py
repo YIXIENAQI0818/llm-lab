@@ -33,50 +33,61 @@ class PlanManager:
         }
         self._save()
 
-    def update(self, action: str, changes: str = "") -> str:
-        """更新当前计划。返回操作结果描述。"""
+    def complete_step(self, step: int) -> str:
+        """标记指定步骤为完成。"""
         if not self.active:
             return "没有活跃计划。"
         plan = self.active
-        parts = action.split(maxsplit=1)
-        cmd = parts[0]
-        try:
-            if cmd == "complete_step":
-                idx = int(parts[1]) - 1 if len(parts) > 1 else plan["current_step"]
-                plan["steps"][idx]["status"] = "✓"
-                if idx + 1 < len(plan["steps"]):
-                    plan["current_step"] = idx + 1
-                    plan["steps"][idx + 1]["status"] = "→"
-            elif cmd == "add_step" and changes:
-                plan["steps"].append({"desc": changes, "status": "○"})
-            elif cmd == "modify_step" and changes:
-                idx = int(parts[1]) - 1 if len(parts) > 1 else plan["current_step"]
-                plan["steps"][idx]["desc"] = changes
-        except (ValueError, IndexError):
-            return "操作失败：参数格式不正确。"
+        idx = step - 1
+        if not (0 <= idx < len(plan["steps"])):
+            return f"步骤 {step} 不存在（共 {len(plan['steps'])} 步）。"
+        plan["steps"][idx]["status"] = "✓"
+        if idx + 1 < len(plan["steps"]):
+            plan["current_step"] = idx + 1
+            plan["steps"][idx + 1]["status"] = "→"
         self._save()
+        return self._check_done(plan)
 
-        # 所有步骤完成 → 自动归档
+    def add_step(self, desc: str) -> str:
+        """追加一个步骤。"""
+        if not self.active:
+            return "没有活跃计划。"
+        plan = self.active
+        plan["steps"].append({"desc": desc, "status": "○"})
+        self._save()
+        return f"已追加步骤 {len(plan['steps'])}：{desc}"
+
+    def modify_step(self, step: int, desc: str) -> str:
+        """修改指定步骤的描述。"""
+        if not self.active:
+            return "没有活跃计划。"
+        plan = self.active
+        idx = step - 1
+        if not (0 <= idx < len(plan["steps"])):
+            return f"步骤 {step} 不存在（共 {len(plan['steps'])} 步）。"
+        plan["steps"][idx]["desc"] = desc
+        self._save()
+        return f"步骤 {step} 已更新。"
+
+    def _check_done(self, plan: dict) -> str:
+        """所有步骤完成 → 自动归档。"""
         if all(s["status"] == "✓" for s in plan["steps"]):
             self.clear()
             return "计划已全部完成，已归档。"
+        return f"步骤已完成。（当前第 {plan['current_step']+1} 步）"
 
-        return f"计划已更新。（当前第 {plan['current_step']+1} 步）"
-
-    def inject(self, user_input: str) -> str:
-        """将当前计划注入用户输入。"""
+    def format_context(self) -> str:
+        """返回计划文本，供 Agent 注入 system prompt。"""
         if not self.active:
-            return user_input
+            return ""
         steps_text = "\n".join(
             f"  {s['status']} 步骤{i+1}: {s['desc']}"
             for i, s in enumerate(self.active["steps"])
         )
-        plan_hint = (
+        return (
             f"[当前计划]\n{steps_text}\n"
-            f"每完成一步请调用 update_plan 标记（complete_step N）。"
-            f"所有步骤完成后计划会自动归档。\n"
+            f"每完成一步请调用 complete_step 标记。如需修改计划请调用 modify_plan_step。"
         )
-        return f"{plan_hint}\n{user_input}"
 
     def clear(self):
         """清空当前计划（归档）。"""
