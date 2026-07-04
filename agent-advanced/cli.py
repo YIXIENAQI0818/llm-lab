@@ -229,16 +229,25 @@ def _handle_command(cmd: str, agent: Agent):
                 for m in all_mem:
                     print(f"  [{m['index']}] {m['content']}  ({m['timestamp']})")
                 print()
+    elif action == "/consolidate":
+        if agent.ltm is None:
+            print("长期记忆未启用。\n")
+        else:
+            before = len(agent.ltm.list_all())
+            removed = agent.ltm.consolidate(agent.llm)
+            after = len(agent.ltm.list_all())
+            print(f"记忆合并完成：{before} → {after}（合并了 {removed} 条）\n")
     elif action == "/help":
         print("命令列表:")
-        print("  /exit       退出程序")
-        print("  /clear      清空对话历史")
-        print("  /history    查看历史消息与统计")
+        print("  /exit         退出程序")
+        print("  /clear        清空对话历史")
+        print("  /history      查看历史消息与统计")
         if agent.ltm:
-            print("  /remember   手动存储长期记忆")
-            print("  /forget     删除长期记忆")
-            print("  /memories   查看所有长期记忆")
-        print("  /help       显示此帮助\n")
+            print("  /remember     手动存储长期记忆")
+            print("  /forget       删除长期记忆")
+            print("  /memories     查看所有长期记忆")
+            print("  /consolidate  LLM 合并清理长期记忆")
+        print("  /help         显示此帮助\n")
     else:
         print(f"未知命令: {action}，输入 /help 查看帮助\n")
 
