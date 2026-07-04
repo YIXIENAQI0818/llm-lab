@@ -14,8 +14,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from demo_tools import SYSTEM_PROMPT, create_demo_tools
-from src.agent_framework import Agent, LongTermMemory
+from demo_tools import create_demo_tools
+from src.agent_framework import Agent, LongTermMemory, PlanManager
+
+SYSTEM_PROMPT = (
+    "你是一个有用的 AI 助手，可以用中文或用户使用的语言回复。"
+    "需要时使用工具获取信息。"
+    "当用户告诉你关于自己的重要信息（名字、偏好、计划等）时，主动调用 save_memory 保存。"
+    "当面对需要多步协调的复杂任务时，先调用 make_plan 制定计划，再逐步执行。"
+)
 
 # 清洗终端输入时可能产生的代理字符碎片（WSL 删除中文时的残留）
 _SURROGATE_RE = re.compile(r"[\ud800-\udfff]")
@@ -28,13 +35,11 @@ def main():
     args = parser.parse_args()
 
     ltm = None if args.no_memory else LongTermMemory()
+    plan_mgr = PlanManager()
 
-    # agent_ref 让工具函数通过闭包访问 Agent 实例（PlanManager 等）
-    agent_ref: list = [None]
-    tools = [] if args.no_tools else create_demo_tools(agent_ref, ltm)
+    tools = [] if args.no_tools else create_demo_tools(plan_mgr=plan_mgr, ltm=ltm)
 
-    agent = Agent(tools=tools, system_prompt=SYSTEM_PROMPT, long_term_memory=ltm)
-    agent_ref[0] = agent
+    agent = Agent(tools=tools, system_prompt=SYSTEM_PROMPT, long_term_memory=ltm, plan_mgr=plan_mgr)
 
     _print_startup(agent, ltm, tools)
 

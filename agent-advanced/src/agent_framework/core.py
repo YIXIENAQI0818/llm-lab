@@ -27,15 +27,16 @@ class Agent:
         llm: LLMClient | None = None,
         tools: list[dict] | None = None,
         system_prompt: str | None = None,
-        max_rounds: int = 10,
+        max_rounds: int = 50,
         long_term_memory=None,
+        plan_mgr=None,
     ):
         self.llm = llm or LLMClient()
         self.memory = ConversationMemory(system_prompt)
         self.tools = ToolRegistry(tools)
         self.max_rounds = max_rounds
         self.ltm = long_term_memory
-        self.plan_mgr = PlanManager()
+        self.plan_mgr = plan_mgr or PlanManager()
 
     def chat(self, user_input: str, verbose: bool = True) -> str:
         """执行一轮对话，返回最终回复。

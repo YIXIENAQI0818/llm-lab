@@ -64,19 +64,11 @@ def _update_plan_stub(action: str, changes: str = "") -> str:
 # 绑定逻辑 + 工具列表
 # ============================================================
 
-SYSTEM_PROMPT = (
-    "你是一个有用的 AI 助手，可以用中文或用户使用的语言回复。"
-    "需要时使用工具获取信息。"
-    "当用户告诉你关于自己的重要信息（名字、偏好、计划等）时，主动调用 save_memory 保存。"
-    "当面对需要多步协调的复杂任务时，先调用 make_plan 制定计划，再逐步执行。"
-)
-
-
-def create_demo_tools(agent_ref: list, ltm=None) -> list[dict]:
+def create_demo_tools(plan_mgr=None, ltm=None) -> list[dict]:
     """创建绑定好的示例工具列表。
 
     Args:
-        agent_ref: 单元素列表 [agent]，闭包访问 Agent 实例（PlanManager 等）
+        plan_mgr: PlanManager 实例，None 时不启用计划工具
         ltm: LongTermMemory 实例，None 时不启用 save_memory
     """
 
@@ -165,11 +157,10 @@ def create_demo_tools(agent_ref: list, ltm=None) -> list[dict]:
             t["fn"] = _save
 
         elif t["name"] == "make_plan":
-            def _make_plan(task, steps):
-                agent = agent_ref[0]
-                if not agent:
-                    return "Agent 未初始化"
-                if agent.plan_mgr.is_active:
+            def _make_plan(task, steps, _pm=plan_mgr):
+                if not _pm:
+                    return "计划功能未启用"
+                if _pm.is_active:
                     return "已有活跃计划。请先完成当前计划或调用 update_plan。"
                 cleaned = []
                 for s in steps:
@@ -177,23 +168,22 @@ def create_demo_tools(agent_ref: list, ltm=None) -> list[dict]:
                     while s and s[0] in "0123456789.、 ":
                         s = s[1:]
                     cleaned.append(s.strip())
-                agent.plan_mgr.create(task, cleaned)
+                _pm.create(task, cleaned)
                 steps_text = "\n".join(f"  {i+1}. {s}" for i, s in enumerate(cleaned))
                 return f"计划已创建（已保存到文件）：\n{steps_text}\n\n请按顺序执行第一步。"
             t["fn"] = _make_plan
 
         elif t["name"] == "update_plan":
-            def _update_plan(action, changes=""):
-                agent = agent_ref[0]
-                if not agent:
-                    return "Agent 未初始化"
-                return agent.plan_mgr.update(action, changes)
+            def _update_plan(action, changes="", _pm=plan_mgr):
+                if not _pm:
+                    return "计划功能未启用"
+                return _pm.update(action, changes)
             t["fn"] = _update_plan
 
     return tools
 
 
-def create_demo_tools_no_memory(agent_ref: list) -> list[dict]:
+def create_demo_tools_no_memory(plan_mgr=None) -> list[dict]:
     """创建不带 save_memory 的工具列表。"""
-    tools = create_demo_tools(agent_ref, ltm=None)
+    tools = create_demo_tools(plan_mgr=plan_mgr, ltm=None)
     return [t for t in tools if t["name"] != "save_memory"]
