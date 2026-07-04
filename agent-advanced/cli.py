@@ -14,8 +14,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from demo_tools import create_demo_tools
-from src.agent_framework import Agent, LongTermMemory, PlanManager
+from src.agent_framework import Agent
+from src.capabilities import LongTermMemory, PlanManager
+from src.capabilities.demo_tools import create_demo_tools
 
 SYSTEM_PROMPT = (
     "你是一个有用的 AI 助手，可以用中文或用户使用的语言回复。"

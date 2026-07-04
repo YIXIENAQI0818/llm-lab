@@ -3,7 +3,6 @@ import re
 
 from .llm import LLMClient
 from .memory import ConversationMemory
-from .plan_manager import PlanManager
 from .tools import ToolRegistry
 
 # Unicode 代理对范围 (U+D800–U+DFFF)，单独出现时不是合法 Unicode
@@ -36,7 +35,10 @@ class Agent:
         self.tools = ToolRegistry(tools)
         self.max_rounds = max_rounds
         self.ltm = long_term_memory
-        self.plan_mgr = plan_mgr or PlanManager()
+        if plan_mgr is None:
+            from ..capabilities.plan_manager import PlanManager
+            plan_mgr = PlanManager()
+        self.plan_mgr = plan_mgr
 
     def chat(self, user_input: str, verbose: bool = True) -> str:
         """执行一轮对话，返回最终回复。
