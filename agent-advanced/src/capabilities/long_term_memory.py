@@ -3,39 +3,37 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+from ..agent_framework.embedding_store import EmbeddingStore
+
 
 class LongTermMemory:
-    """长期记忆管理器 — 基于 JSON 文件的持久化记忆。
+    """长期记忆管理器 — JSON 持久化 + embedding 语义检索。
 
     记忆以 JSON 数组形式存储在文件中，支持增删查。
-    检索使用关键词匹配 + 时间衰减，不依赖外部 embedding 服务。
-    支持相似度去重（本地）和 LLM 驱动的记忆合并。
-
-    用法:
-        ltm = LongTermMemory()
-        ltm.add("用户叫小明，住在北京")       # 自动相似度去重
-        results = ltm.search("北京")
-        ltm.consolidate(llm_client)            # LLM 深度清理
+    检索使用 embedding 余弦相似度 + 时间衰减。
+    支持 embedding 相似度去重和 LLM 驱动的记忆合并。
     """
 
-    # 相似度阈值：超过此值视为同一事实，覆盖旧记忆
-    _SIMILARITY_THRESHOLD = 0.5
+    _SIMILARITY_THRESHOLD = 0.75  # embedding 余弦相似度阈值（短中文文本偏高）
+    _MIN_SCORE_THRESHOLD = 0.3   # 检索时低于此值的记忆不返回
 
-    def __init__(self, storage_dir: str = "agent_memory"):
+    def __init__(self, embedding_store: EmbeddingStore | None = None, storage_dir: str = "agent_memory"):
         self._dir = Path(storage_dir)
         self._file = self._dir / "agent_memory.json"
+        self._embedding = embedding_store if embedding_store is not None else EmbeddingStore()
         self._memories: list[dict] = []
 
         self._dir.mkdir(parents=True, exist_ok=True)
         if self._file.exists():
             self._memories = json.loads(self._file.read_text(encoding="utf-8"))
+            self._rebuild_embedding_index()
         else:
             self._save()
 
     # ---- 写入 ----
 
     def add(self, content: str) -> bool:
-        """添加一条记忆。自动去重：如与已有记忆高度相似则覆盖，否则追加。
+        """添加一条记忆。自动去重：如与已有记忆高度相似则覆盖。
 
         Returns:
             True 表示新增，False 表示覆盖了已有记忆。
@@ -43,49 +41,59 @@ class LongTermMemory:
         content = content.strip()
         now = datetime.now().isoformat(timespec="seconds")
 
-        # 相似度去重
+        # embedding 相似度去重
         for m in self._memories:
-            if _content_similarity(content, m["content"]) >= self._SIMILARITY_THRESHOLD:
+            if self._content_similarity(content, m["content"]) >= self._SIMILARITY_THRESHOLD:
                 m["content"] = content
                 m["timestamp"] = now
                 self._save()
-                return False  # 覆盖
+                self._rebuild_embedding_index()
+                return False
 
-        # 全新记忆
         self._memories.append({"content": content, "timestamp": now})
+        self._embedding.add("memories", content, {"timestamp": now})
         self._save()
-        return True  # 新增
+        return True
 
     def forget(self, index: int):
         """删除指定序号的记忆（序号从 0 开始）。"""
         if 0 <= index < len(self._memories):
             self._memories.pop(index)
             self._save()
+            self._rebuild_embedding_index()
 
     # ---- 读取 ----
 
     def search(self, query: str, top_k: int = 3) -> list[dict]:
-        """检索与 query 最相关的 top_k 条记忆。
+        """检索与 query 语义最相关的 top_k 条记忆。
 
-        算法：对每条记忆计算关键词重叠得分，再乘以时间衰减因子。
-        返回按得分降序排列的记忆列表。
+        算法：embedding 余弦相似度 × 时间衰减，低于阈值的过滤。
         """
         if not self._memories or not query.strip():
             return []
 
-        query_words = set(query)
-        scored = []
-        for m in self._memories:
-            content = m["content"]
-            content_words = set(content)
-            overlap = query_words & content_words
-            score = len(overlap) / max(len(query_words), 1)
-            age_days = _age_days(m["timestamp"])
-            decay = 0.5 ** (age_days / 30)
-            scored.append((score * decay, m))
+        results = self._embedding.search(
+            "memories", query, top_k=len(self._memories), threshold=0.0,
+        )
 
-        scored.sort(key=lambda x: x[0], reverse=True)
-        return [m for _, m in scored[:top_k]]
+        # 叠加时间衰减
+        for r in results:
+            ts = r["meta"].get("timestamp", "")
+            r["score"] = r["score"] * _time_decay(ts)
+
+        # 按衰减后得分排序，过滤低分
+        results.sort(key=lambda x: x["score"], reverse=True)
+
+        picked = []
+        for r in results[:top_k]:
+            if r["score"] < self._MIN_SCORE_THRESHOLD:
+                continue
+            picked.append({
+                "content": r["text"],
+                "score": r["score"],
+                "timestamp": r["meta"].get("timestamp", ""),
+            })
+        return picked
 
     def list_all(self) -> list[dict]:
         """返回所有记忆（包含序号）。"""
@@ -109,20 +117,12 @@ class LongTermMemory:
 直接输出 JSON 数组，格式：[{"content": "..."}, ...]"""
 
     def consolidate(self, llm_client) -> int:
-        """调用 LLM 对所有记忆做合并去重。返回合并前后数量差。
-
-        Args:
-            llm_client: LLMClient 实例，用于调用 LLM
-
-        Returns:
-            被合并掉的记忆数量（合并前 - 合并后）
-        """
+        """调用 LLM 对所有记忆做合并去重。返回合并前后数量差。"""
         if len(self._memories) <= 1:
             return 0
 
         before = len(self._memories)
 
-        # 构建 prompt
         memory_text = "\n".join(
             f"- [{m['timestamp']}] {m['content']}"
             for m in self._memories
@@ -135,25 +135,34 @@ class LongTermMemory:
         response = llm_client.chat(messages)
         text = response.choices[0].message.content
 
-        # 从 LLM 回复中提取 JSON 数组
         cleaned = _extract_json_array(text)
         if cleaned is None:
-            return 0  # 解析失败，不改动
+            return 0
 
-        # 替换记忆：保留原始 timestamp 的逻辑（新整理的用当前时间）
         now = datetime.now().isoformat(timespec="seconds")
-        self._memories = []
-        for item in cleaned:
-            if isinstance(item, dict) and "content" in item:
-                self._memories.append({
-                    "content": item["content"].strip(),
-                    "timestamp": now,
-                })
+        self._memories = [
+            {"content": item["content"].strip(), "timestamp": now}
+            for item in cleaned
+            if isinstance(item, dict) and "content" in item
+        ]
 
         self._save()
+        self._rebuild_embedding_index()
         return before - len(self._memories)
 
     # ---- 内部 ----
+
+    def _content_similarity(self, a: str, b: str) -> float:
+        """两条记忆文本的语义相似度（0~1）。"""
+        return self._embedding.similarity(a, b)
+
+    def _rebuild_embedding_index(self):
+        """从当前记忆列表重建 EmbeddingStore 中的 memories collection。"""
+        items = [
+            {"text": m["content"], "meta": {"timestamp": m["timestamp"]}}
+            for m in self._memories
+        ]
+        self._embedding.rebuild("memories", items)
 
     def _save(self):
         self._file.write_text(
@@ -162,34 +171,21 @@ class LongTermMemory:
         )
 
 
-def _content_similarity(a: str, b: str) -> float:
-    """计算两条记忆内容的相似度（0~1）。
-
-    使用字级别 Jaccard 系数：交集字数 / 并集字数。
-    """
-    set_a = set(a)
-    set_b = set(b)
-    if not set_a or not set_b:
-        return 0.0
-    return len(set_a & set_b) / len(set_a | set_b)
-
-
-def _age_days(timestamp: str) -> float:
-    """计算时间戳距现在的天数。"""
+def _time_decay(timestamp: str) -> float:
+    """时间衰减因子：每 30 天减半。"""
     try:
         t = datetime.fromisoformat(timestamp)
-        return (datetime.now() - t).total_seconds() / 86400
+        age_days = (datetime.now() - t).total_seconds() / 86400
+        return 0.5 ** (age_days / 30)
     except Exception:
-        return 365  # 解析失败就当很旧
+        return 0.1
 
 
 def _extract_json_array(text: str) -> list | None:
     """从 LLM 回复中提取 JSON 数组，容忍 markdown 代码块包裹。"""
-    # 去掉 markdown 代码块
     text = re.sub(r"```(?:json)?\s*", "", text)
     text = re.sub(r"```", "", text)
 
-    # 找到第一个 [ 和最后一个 ]
     start = text.find("[")
     end = text.rfind("]")
     if start == -1 or end == -1 or start >= end:

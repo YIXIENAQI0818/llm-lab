@@ -29,13 +29,19 @@ class Agent:
         max_rounds: int = 50,
         long_term_memory=None,
         plan_mgr=None,
+        tool_top_k: int | None = None,
+        embedding_store=None,
     ):
         self.llm = llm or LLMClient()
         self.memory = ConversationMemory(system_prompt)
-        self.tools = ToolRegistry(tools)
+
+        es = embedding_store if embedding_store is not None else EmbeddingStore()
+        self.tools = ToolRegistry(es, tools)
+
         self.max_rounds = max_rounds
         self.ltm = long_term_memory
         self.plan_mgr = plan_mgr
+        self.tool_top_k = tool_top_k
         self._base_system = system_prompt or ""
 
     def chat(self, user_input: str, verbose: bool = True) -> str:
@@ -51,7 +57,9 @@ class Agent:
 
             response = self.llm.chat(
                 self.memory.get_messages(),
-                tools=self.tools.get_definitions(),
+                tools=self.tools.get_definitions(
+                    query=user_input, top_k=self.tool_top_k,
+                ),
             )
             msg = response.choices[0].message
 

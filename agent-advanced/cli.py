@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from src.agent_framework import Agent
+from src.agent_framework import Agent, EmbeddingStore
 from src.capabilities import LongTermMemory, PlanManager
 from src.capabilities.demo_tools import create_demo_tools
 
@@ -36,12 +36,19 @@ def main():
     parser.add_argument("--no-memory", action="store_true", help="不启用长期记忆")
     args = parser.parse_args()
 
-    ltm = None if args.no_memory else LongTermMemory()
+    # 创建共享的 EmbeddingStore，同时传给 Agent(ToolRegistry) 和 LTM
+    embedding_store = EmbeddingStore()
+
+    ltm = None if args.no_memory else LongTermMemory(embedding_store=embedding_store)
     plan_mgr = PlanManager()
 
     tools = [] if args.no_tools else create_demo_tools(plan_mgr=plan_mgr, ltm=ltm)
 
-    agent = Agent(tools=tools, system_prompt=SYSTEM_PROMPT, long_term_memory=ltm, plan_mgr=plan_mgr)
+    agent = Agent(
+        tools=tools, system_prompt=SYSTEM_PROMPT,
+        long_term_memory=ltm, plan_mgr=plan_mgr,
+        tool_top_k=5, embedding_store=embedding_store,
+    )
 
     _print_startup(agent, ltm, tools)
 
@@ -69,6 +76,7 @@ def main():
 def _print_startup(agent: Agent, ltm, tools: list):
     print("🤖 Agent CLI — 输入消息开始对话")
     print("   /exit 退出  /clear 清空历史  /history 查看历史  /memories 查看记忆  /plan <任务> 手动计划  /help 帮助")
+    print(f"   🔗 Embedding: BAAI/bge-small-zh-v1.5 (collections: {agent.tools._embedding.list_collections()})")
     if ltm:
         print(f"   🧠 长期记忆已启用 (已有 {len(ltm.list_all())} 条记忆)")
         print("   /remember <内容>  手动存储记忆  /forget <序号>  删除记忆")
@@ -76,7 +84,7 @@ def _print_startup(agent: Agent, ltm, tools: list):
         print(f"   📋 活跃计划: {agent.plan_mgr.active['task']}")
     if tools:
         tools_list = ", ".join(t["name"] for t in tools)
-        print(f"   可用工具: {tools_list}")
+        print(f"   可用工具: {tools_list} (过滤 top_k={agent.tool_top_k})" if agent.tool_top_k else f"   可用工具: {tools_list}")
     print()
 
 
