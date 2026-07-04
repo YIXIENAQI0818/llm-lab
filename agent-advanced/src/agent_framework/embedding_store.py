@@ -6,7 +6,7 @@ class EmbeddingStore:
     """通用语义存储，支持多 collection 隔离。
 
     每个 collection 内按余弦相似度检索，跨 collection 可计算文本相似度。
-    一个进程内通常只创建一个实例（通过 share() 共享模型），避免重复加载。
+    一个进程内通常只创建一个实例，SentenceTransformer 通过类变量单例共享，避免重复加载。
 
     用法:
         store = EmbeddingStore()

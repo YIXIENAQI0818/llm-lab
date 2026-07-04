@@ -81,6 +81,8 @@ def main():
 def _print_startup(agent: Agent, ltm, tools: list):
     print("🤖 Agent CLI — 输入消息开始对话")
     print("   /exit 退出  /clear 清空历史  /history 查看历史  /memories 查看记忆  /plan <任务> 手动计划  /help 帮助")
+    if agent.memory.max_tokens:
+        print(f"   📐 Token 上限: {agent.memory.max_tokens}（tiktoken 精确计数，超限自动裁剪）")
     print(f"   🔗 Embedding: BAAI/bge-small-zh-v1.5 (collections: {agent.tools._embedding.list_collections()})")
     if ltm:
         print(f"   🧠 长期记忆已启用 (已有 {len(ltm.list_all())} 条记忆)")
@@ -196,7 +198,8 @@ def _show_history(agent: Agent):
         if m.get("tool_calls"):
             tool_info = f" [调用: {', '.join(tc['function']['name'] for tc in m['tool_calls'])}]"
         print(f"  [{i}] {role}{tool_info}: {content}")
-    print(f"\n  📊 {agent.memory.stats()}\n")
+    stats = agent.memory.stats()
+    print(f"\n  📊 消息数: {stats['n_messages']}, Token: {stats['tokens']} (tiktoken)\n")
 
 
 if __name__ == "__main__":

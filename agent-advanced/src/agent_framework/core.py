@@ -32,9 +32,10 @@ class Agent:
         plan_mgr=None,
         tool_top_k: int | None = None,
         embedding_store=None,
+        max_tokens: int | None = None,
     ):
         self.llm = llm or LLMClient()
-        self.memory = ConversationMemory(system_prompt)
+        self.memory = ConversationMemory(system_prompt, max_tokens=max_tokens)
 
         es = embedding_store if embedding_store is not None else EmbeddingStore()
         self.tools = ToolRegistry(es, tools)

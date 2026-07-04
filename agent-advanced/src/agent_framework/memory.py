@@ -1,12 +1,20 @@
+import tiktoken
+
+
 class ConversationMemory:
     """对话历史管理器，提供短期记忆能力。
 
     消息以 OpenAI 原生格式存储，与 API 对齐。
-    支持 token 粗估和上下文窗口裁剪。
+    使用 tiktoken 精确计数 token，支持超限自动裁剪。
     """
 
-    def __init__(self, system_prompt: str | None = None):
+    _enc = tiktoken.get_encoding("cl100k_base")
+    # 每条消息的固定结构开销（role + 标点等），粗估 ~4 token
+    _MSG_OVERHEAD = 4
+
+    def __init__(self, system_prompt: str | None = None, max_tokens: int | None = None):
         self._messages: list[dict] = []
+        self.max_tokens = max_tokens
         if system_prompt:
             self.add_system(system_prompt)
 
@@ -20,6 +28,7 @@ class ConversationMemory:
 
     def add_user(self, content: str):
         self._messages.append({"role": "user", "content": content})
+        self._auto_trim()
 
     def add_assistant(self, message):
         """添加完整的 assistant message（可能含 tool_calls）。"""
@@ -38,6 +47,7 @@ class ConversationMemory:
                 for tc in (message.tool_calls or [])
             ] if message.tool_calls else None,
         })
+        self._auto_trim()
 
     def add_tool_result(self, call_id: str, result: str):
         self._messages.append({
@@ -45,15 +55,14 @@ class ConversationMemory:
             "tool_call_id": call_id,
             "content": result,
         })
+        self._auto_trim()
 
     # ---- 读取 ----
 
     def get_messages(self) -> list[dict]:
-        """返回当前消息列表（清理掉 None 字段）。"""
         return _strip_nones(self._messages)
 
     def clear(self):
-        """清空历史，保留 system prompt。"""
         sp = None
         if self._messages and self._messages[0]["role"] == "system":
             sp = self._messages[0]["content"]
@@ -61,31 +70,47 @@ class ConversationMemory:
         if sp:
             self.add_system(sp)
 
-    # ---- 工具 ----
+    # ---- Token 计数 ----
+
+    def token_count(self) -> int:
+        """精确 token 计数（tiktoken）。"""
+        return self._count_tokens(self._messages)
 
     def stats(self) -> dict:
-        """统计消息数与估算 token 数。"""
-        total_chars = sum(
-            len(str(m.get("content", "")))
-            for m in self._messages
-        )
         return {
             "n_messages": len(self._messages),
-            "estimated_tokens": total_chars // 2,  # 粗估
+            "tokens": self.token_count(),
         }
+
+    # ---- 裁剪 ----
 
     def trim(self, max_tokens: int):
         """裁剪到 max_tokens 以内，保留 system prompt + 最近消息。"""
         start = 1 if self._messages and self._messages[0]["role"] == "system" else 0
-        while self._stats_from(start)["estimated_tokens"] > max_tokens and len(self._messages) > start + 1:
+        while self._count_tokens(self._messages) > max_tokens and len(self._messages) > start + 1:
             self._messages.pop(start)
 
-    def _stats_from(self, start: int) -> dict:
-        total = sum(
-            len(str(m.get("content", "")))
-            for m in self._messages[start:]
-        )
-        return {"estimated_tokens": total // 2}
+    # ---- 内部 ----
+
+    def _count_tokens(self, messages: list[dict]) -> int:
+        """对消息列表做精确 token 计数。"""
+        total = 0
+        for m in messages:
+            total += self._MSG_OVERHEAD
+            content = m.get("content") or ""
+            total += len(self._enc.encode(content))
+            if m.get("tool_calls"):
+                for tc in m["tool_calls"]:
+                    fn = tc.get("function", {})
+                    total += len(self._enc.encode(fn.get("name", "")))
+                    total += len(self._enc.encode(fn.get("arguments", "")))
+            if m.get("tool_call_id"):
+                total += len(self._enc.encode(m["tool_call_id"]))
+        return total
+
+    def _auto_trim(self):
+        if self.max_tokens is not None:
+            self.trim(self.max_tokens)
 
 
 def _strip_nones(messages: list[dict]) -> list[dict]:
