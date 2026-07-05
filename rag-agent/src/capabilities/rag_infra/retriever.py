@@ -22,9 +22,10 @@ class Retriever:
         "用空格分隔输出所有子问题，不要编号，不要解释。"
     )
 
-    def __init__(self, store, llm_client=None):
+    def __init__(self, store, llm_client=None, reranker=None):
         self._store = store
         self._llm = llm_client
+        self._reranker = reranker
         self._bm25: dict[str, BM25Okapi] = {}
         self._bm25_texts: dict[str, list[str]] = {}
         self._bm25_metas: dict[str, list[dict]] = {}
@@ -51,20 +52,27 @@ class Retriever:
         self._bm25_texts[collection] = texts
         self._bm25_metas[collection] = metas or [{} for _ in texts]
 
+    _COARSE_K = 20  # 粗排取前 20
+
     def search(self, collection: str, query: str, threshold: float,
                top_k: int = 5, hybrid: bool = True,
-               rewrite: str | bool = "expand") -> list[dict]:
+               rewrite: str | bool = "expand",
+               rerank: bool = True) -> list[dict]:
         """混合检索，返回 [{"score","text","meta"}]。"""
         search_query = self._rewrite(query, rewrite) if rewrite and self._llm else query
 
         dense = self._store.search(collection, search_query,
-                                   top_k=top_k * 2, threshold=threshold)
+                                   top_k=self._COARSE_K, threshold=threshold)
 
         if not hybrid or collection not in self._bm25:
-            return dense[:top_k]
+            candidates = dense
+        else:
+            bm25 = self._bm25_search(collection, query, self._COARSE_K)
+            candidates = self._fuse(dense, bm25, self._COARSE_K)
 
-        bm25 = self._bm25_search(collection, query, top_k * 2)
-        return self._fuse(dense, bm25, top_k)
+        if rerank and self._reranker and candidates:
+            return self._reranker.rerank(query, candidates, top_k)
+        return candidates[:top_k]
 
     # ---- 内部 ----
 

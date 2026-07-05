@@ -4,8 +4,9 @@
 检索通过 search_docs 工具供 LLM 调用。
 """
 
-from .token_chunker import TokenChunker, load_markdown_files
-from .retriever import Retriever
+from .rag_infra.token_chunker import TokenChunker, load_markdown_files
+from .rag_infra.retriever import Retriever
+from .rag_infra.reranker import Reranker
 
 
 class KnowledgeBase:
@@ -16,7 +17,7 @@ class KnowledgeBase:
     def __init__(self, es, llm_client=None):
         self._es = es
         self._tc = TokenChunker()
-        self._rt = Retriever(es, llm_client)
+        self._rt = Retriever(es, llm_client, reranker=Reranker())
 
     def build(self, path: str = "data/") -> str:
         """首次索引（启动时调用）。已有数据则跳过。"""
