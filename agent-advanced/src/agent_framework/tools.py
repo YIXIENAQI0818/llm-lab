@@ -32,15 +32,18 @@ class ToolRegistry:
         }
         self._embedding.add("tools", description, {"name": name})
 
-    def get_definitions(self, query: str | None = None, top_k: int | None = None) -> list[dict]:
+    def get_definitions(self, query: str | None = None, top_k: int | None = None,
+                        always_include: set[str] | None = None) -> list[dict]:
         """返回 OpenAI 格式的工具定义列表。
 
         query + top_k 提供时，只返回语义最相关的 top_k 个工具。
-        不提供 query 时返回全部（向后兼容）。
+        always_include 中的工具始终包含，不受过滤影响。
         """
         if query and top_k and len(self._tools) > top_k:
             results = self._embedding.search("tools", query, top_k=top_k)
             names = {r["meta"]["name"] for r in results}
+            if always_include:
+                names.update(always_include)
             return [self._tools[n]["definition"] for n in names if n in self._tools]
 
         return [t["definition"] for t in self._tools.values()] if self._tools else []

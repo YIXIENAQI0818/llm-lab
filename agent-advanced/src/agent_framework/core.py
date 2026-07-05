@@ -58,6 +58,7 @@ class Agent:
                 self.memory.get_messages(),
                 tools=self.tools.get_definitions(
                     query=user_input, top_k=self.tool_top_k,
+                    always_include={"recall_memory"},
                 ),
             )
             msg = response.choices[0].message
