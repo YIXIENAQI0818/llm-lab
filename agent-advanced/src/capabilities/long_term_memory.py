@@ -31,6 +31,9 @@ class LongTermMemory:
         if self._file.exists():
             self._memories = json.loads(self._file.read_text(encoding="utf-8"))
             self._rebuild_embedding_index()
+            # 启动时触发一次 consolidate，处理跨会话累积的记忆碎片
+            if self._llm and self._CONSOLIDATE_INTERVAL > 0:
+                self.consolidate(self._llm)
         else:
             self._save()
 
@@ -184,10 +187,8 @@ class LongTermMemory:
             return
         self._add_since_consolidate += 1
         if self._add_since_consolidate >= self._CONSOLIDATE_INTERVAL:
-            removed = self.consolidate(self._llm)
-            if removed > 0:
-                # 合并成功，把减少的条数也计入计数器（避免刚合完又触发）
-                self._add_since_consolidate = 0
+            self.consolidate(self._llm)
+            self._add_since_consolidate = 0
 
     def _find_related(self, content: str) -> list[int]:
         """用 bi-encoder 找出所有与 content 语义相近的已有记忆索引。
