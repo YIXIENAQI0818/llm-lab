@@ -10,6 +10,7 @@ class ConversationMemory:
 
     _enc = tiktoken.get_encoding("cl100k_base")
     _MSG_OVERHEAD = 4
+    TRIM_TARGET_RATIO = 0.7  # 摘要裁剪到 max_tokens * 70%，留 30% 缓冲
 
     SUMMARIZE_PROMPT = (
         "请用一段简洁的文字（2-3句话）摘要以下对话历史，"
@@ -90,22 +91,17 @@ class ConversationMemory:
         return self._count_tokens(self._messages)
 
     def stats(self) -> dict:
+        # 摘要消息的 token 数从 messages 中实际统计
+        summary_tokens = 0
+        for m in self._messages:
+            if (isinstance(m.get("content"), str)
+                    and m["content"].startswith("[对话摘要]")):
+                summary_tokens += self._count_tokens([m])
         return {
             "n_messages": len(self._messages),
             "tokens": self.token_count(),
-            "summary_tokens": len(self._enc.encode(self._summary)) if self._summary else 0,
+            "summary_tokens": summary_tokens,
         }
-
-    # ---- 裁剪 ----
-
-    def trim(self, max_tokens: int):
-        """纯裁剪（无 LLM 时用），按轮次 pop 最老的消息。"""
-        start = 1 if self._messages and self._messages[0]["role"] == "system" else 0
-        while self._count_tokens(self._messages) > max_tokens and len(self._messages) > start + 1:
-            self._messages.pop(start)
-            # 连带 pop 同一轮次的后续消息
-            while start < len(self._messages) and self._messages[start].get("role") != "user":
-                self._messages.pop(start)
 
     # ---- 内部 ----
 
@@ -129,10 +125,7 @@ class ConversationMemory:
             return
         if self._llm:
             self._summarize_and_trim()
-        else:
-            self.trim(self.max_tokens)
-
-    TRIM_TARGET_RATIO = 0.7  # 裁剪到 max_tokens * 70%，留 30% 缓冲
+        # 无 LLM 则不做裁剪；摘要压缩是本项目的核心能力
 
     def _summarize_and_trim(self):
         """超限时按完整轮次 pop，一次性裁到 max_tokens * 70%。
