@@ -16,6 +16,7 @@ class LongTermMemory:
 
     _SIMILARITY_THRESHOLD = 0.6   # bi-encoder 去重粗筛阈值（宽容，LLM 做最终裁决）
     _MIN_SCORE_THRESHOLD = 0.3    # 检索时低于此值的记忆不返回
+    _CONSOLIDATE_INTERVAL = 10    # 每新增 N 条记忆自动触发一次 consolidate（0=禁用）
 
     def __init__(self, embedding_store: EmbeddingStore, storage_dir: str = "agent_memory",
                  llm_client=None):
@@ -23,6 +24,7 @@ class LongTermMemory:
         self._file = self._dir / "agent_memory.json"
         self._embedding = embedding_store
         self._llm = llm_client
+        self._add_since_consolidate = 0
         self._memories: list[dict] = []
 
         self._dir.mkdir(parents=True, exist_ok=True)
@@ -51,6 +53,7 @@ class LongTermMemory:
             self._memories.append({"content": content, "timestamp": now})
             self._embedding.add("memories", content, {"timestamp": now})
             self._save()
+            self._maybe_consolidate()
             return True
 
         # 批量整理：所有相关旧记忆 + 新记忆 → LLM 判断合并/拆分
@@ -72,6 +75,7 @@ class LongTermMemory:
             self._memories.append({"content": m, "timestamp": now})
             self._embedding.add("memories", m, {"timestamp": now})
         self._save()
+        self._maybe_consolidate()
         return False
 
     def forget(self, index: int):
@@ -173,6 +177,17 @@ class LongTermMemory:
         return before - len(self._memories)
 
     # ---- 内部 ----
+
+    def _maybe_consolidate(self):
+        """每新增 N 条记忆自动触发一次 consolidate。_CONSOLIDATE_INTERVAL=0 则禁用。"""
+        if not self._llm or self._CONSOLIDATE_INTERVAL <= 0:
+            return
+        self._add_since_consolidate += 1
+        if self._add_since_consolidate >= self._CONSOLIDATE_INTERVAL:
+            removed = self.consolidate(self._llm)
+            if removed > 0:
+                # 合并成功，把减少的条数也计入计数器（避免刚合完又触发）
+                self._add_since_consolidate = 0
 
     def _find_related(self, content: str) -> list[int]:
         """用 bi-encoder 找出所有与 content 语义相近的已有记忆索引。
