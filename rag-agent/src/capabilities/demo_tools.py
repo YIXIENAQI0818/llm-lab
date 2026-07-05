@@ -75,7 +75,7 @@ def _modify_plan_step_stub(step: int, desc: str, restart: bool = False) -> str:
     return "步骤已修改"
 
 
-def _search_docs_stub(query: str, top_k: int = 5) -> str:
+def _search_docs_stub(query: str, strategy: str = "expand") -> str:
     return "未找到相关文档（知识库未启用或未索引）"
 
 
@@ -217,13 +217,22 @@ def create_demo_tools(pm, ltm, kb) -> list[dict]:
                 "在已索引的知识库中语义检索与查询最相关的文档片段。"
                 "当用户问的问题需要基于已索引的文档内容回答时，"
                 "应优先调用此工具检索相关上下文，然后再根据检索结果回答。"
-                "返回与查询最相关的 top-k 条文档片段（默认 5）。"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "检索查询，应提取用户问题的关键信息"},
-                    "top_k": {"type": "integer", "description": "返回的最相关文档片段数量，默认 3"},
+                    "strategy": {
+                        "type": "string",
+                        "enum": ["expand", "decompose"],
+                        "description": (
+                            "检索策略。expand：将查询扩展为包含同义词、近义词和相关术语的关键词，"
+                            "适用于概念性问题，如'注意力机制是什么'。"
+                            "decompose：将复杂查询拆解为多个独立的简单子问题分别检索，"
+                            "适用于需要比较多方面的问题，如'A和B有什么区别'。"
+                            "默认为 expand。"
+                        ),
+                    },
                 },
                 "required": ["query"],
             },
@@ -290,8 +299,8 @@ def create_demo_tools(pm, ltm, kb) -> list[dict]:
             t["fn"] = _modify_ps
 
         elif t["name"] == "search_docs":
-            def _search_docs(query, top_k=5, _kb=kb):
-                results = _kb.search(query, top_k=top_k)
+            def _search_docs(query, strategy="expand", _kb=kb):
+                results = _kb.search(query, strategy=strategy)
                 if not results:
                     return "未找到相关文档"
                 lines = []

@@ -13,8 +13,6 @@ class LongTermMemory:
     每条记忆有 UUID，合并/删除时单条操作，无需全量重建。
     """
 
-    _SIMILARITY_THRESHOLD = 0.6
-    _MIN_SCORE_THRESHOLD = 0.3
     _CONSOLIDATE_INTERVAL = 10
 
     def __init__(self, es : ChromaDBStore, llm_client):
@@ -90,7 +88,8 @@ class LongTermMemory:
 
     # ---- 读取 ----
 
-    def search(self, query: str, top_k: int = 3) -> list[dict]:
+    def search(self, query: str, top_k: int = 3,
+               min_score: float = 0.3) -> list[dict]:
         if not self._memories or not query.strip():
             return []
 
@@ -106,7 +105,7 @@ class LongTermMemory:
 
         picked = []
         for r in results[:top_k]:
-            if r["score"] < self._MIN_SCORE_THRESHOLD:
+            if r["score"] < min_score:
                 continue
             picked.append({
                 "content": r["text"],
@@ -183,13 +182,14 @@ class LongTermMemory:
         if self._add_since_consolidate >= self._CONSOLIDATE_INTERVAL:
             self.consolidate()
 
-    def _find_related(self, content: str) -> list[int]:
+    def _find_related(self, content: str,
+                       sim_threshold: float = 0.6) -> list[int]:
         scores, items = self._es.batch_similarity("memories", content)
         id_to_idx = {m["id"]: i for i, m in enumerate(self._memories)}
         related = []
         for score, item in zip(scores, items):
             mid = item["meta"].get("id", "")
-            if score >= self._SIMILARITY_THRESHOLD and mid in id_to_idx:
+            if score >= sim_threshold and mid in id_to_idx:
                 related.append(id_to_idx[mid])
         return related
 

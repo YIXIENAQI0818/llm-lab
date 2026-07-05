@@ -54,7 +54,7 @@ class ToolRegistry:
         always_include 中的工具始终包含，不受过滤影响。
         """
         if query and top_k and len(self._tools) > top_k:
-            results = self._es.search("tools", query, top_k=top_k)
+            results = self._es.search("tools", query, top_k=top_k, threshold=0.0)
             names = {r["meta"]["name"] for r in results}
             if always_include:
                 names.update(always_include)

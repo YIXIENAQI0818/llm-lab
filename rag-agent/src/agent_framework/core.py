@@ -45,7 +45,7 @@ class Agent:
 
         self.ltm = LongTermMemory(self.es, llm_client=self.llm)
         self.pm = PlanManager()
-        self.kb = KnowledgeBase(self.es)
+        self.kb = KnowledgeBase(self.es, llm_client=self.llm)
         self.kb.build()
 
         tools = create_demo_tools(pm=self.pm, ltm=self.ltm, kb=self.kb)

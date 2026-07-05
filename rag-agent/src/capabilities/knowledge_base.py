@@ -5,20 +5,23 @@
 """
 
 from .token_chunker import TokenChunker, load_markdown_files
-from ..agent_framework.chroma_store import ChromaDBStore
+from .retriever import Retriever
+
 
 class KnowledgeBase:
     """离线索引 + 在线检索的知识库。"""
 
     COLLECTION = "documents"
 
-    def __init__(self, es : ChromaDBStore):
+    def __init__(self, es, llm_client=None):
         self._es = es
         self._tc = TokenChunker()
+        self._rt = Retriever(es, llm_client)
 
     def build(self, path: str = "data/") -> str:
         """首次索引（启动时调用）。已有数据则跳过。"""
         if not self.is_empty():
+            self._rt.build_bm25(self.COLLECTION)
             return "知识库已有数据，跳过索引"
         return self.reindex(path)
 
@@ -34,8 +37,10 @@ class KnowledgeBase:
             for c in chunks:
                 all_chunks.append({"text": c["text"], "meta": c["meta"]})
 
-        # 批量编码 + 重建 collection，比逐个 add 快
         self._es.rebuild(self.COLLECTION, all_chunks)
+        texts = [c["text"] for c in all_chunks]
+        metas = [c["meta"] for c in all_chunks]
+        self._rt.rebuild_bm25(self.COLLECTION, texts, metas)
 
         counts = {}
         for c in all_chunks:
@@ -44,11 +49,12 @@ class KnowledgeBase:
         details = "\n".join(f"  {src}: {n} chunks" for src, n in counts.items())
         return f"索引完成：{len(docs)} 个文件 → {len(all_chunks)} 个片段\n{details}"
 
-    def search(self, query: str, top_k: int = 3,
-               threshold: float = 0.3) -> list[dict]:
-        """语义检索文档片段（供 search_docs 工具调用）。"""
-        return self._es.search(self.COLLECTION, query, top_k=top_k,
-                                      threshold=threshold)
+    def search(self, query: str, strategy: str = "expand",
+               top_k: int = 5, threshold: float = 0.3) -> list[dict]:
+        """混合检索文档片段（供 search_docs 工具调用）。"""
+        rewrite = strategy if strategy in ("expand", "decompose") else "expand"
+        return self._rt.search(self.COLLECTION, query, threshold=threshold,
+                               top_k=top_k, rewrite=rewrite)
 
     def is_empty(self) -> bool:
         return self._es.collection_size(self.COLLECTION) == 0

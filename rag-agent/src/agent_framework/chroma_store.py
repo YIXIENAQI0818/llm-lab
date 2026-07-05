@@ -76,8 +76,8 @@ class ChromaDBStore:
 
     # ---- 读取 ----
 
-    def search(self, collection: str, query: str, top_k: int = 5,
-               threshold: float = 0.0) -> list[dict]:
+    def search(self, collection: str, query: str, threshold: float,
+               top_k: int = 5) -> list[dict]:
         """余弦相似度检索，返回 [{"score","text","meta"}]。"""
         col = self._get_or_create(collection)
         if col.count() == 0:
@@ -136,6 +136,16 @@ class ChromaDBStore:
 
     def list_collections(self) -> list[str]:
         return self._client.list_collections()
+
+    def get_all(self, collection: str) -> list[dict]:
+        """返回 collection 中所有记录的 [{"text","meta"}]。"""
+        try:
+            col = self._client.get_collection(collection)
+            result = col.get(include=["documents", "metadatas"])
+            return [{"text": t, "meta": m}
+                    for t, m in zip(result["documents"], result["metadatas"])]
+        except Exception:
+            return []
 
     def __len__(self):
         return sum(self.collection_size(c) for c in self.list_collections())
