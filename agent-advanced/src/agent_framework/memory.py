@@ -136,17 +136,21 @@ class ConversationMemory:
         """超限时按完整轮次 pop，直到不超限为止。
 
         每轮 pop：user + 后续非 user 消息（assistant+tc、tool），保证不拆散。
+
+        先用临时副本模拟 pop 找出要删的消息，LLM 摘要成功后才真正删除。
+        如果 LLM 调用失败，self._messages 保持原样，不丢数据。
         """
         start = 1 if self._messages and self._messages[0]["role"] == "system" else 0
         if len(self._messages) - start <= 1:
             return
 
-        # pop 完整轮次，直到不超限或只剩 1 轮
+        # 在临时副本上模拟 pop，找出要删的消息（不修改 self._messages）
+        temp = list(self._messages)
         to_remove = []
-        while self._count_tokens(self._messages) > self.max_tokens and len(self._messages) > start + 1:
-            to_remove.append(self._messages.pop(start))
-            while start < len(self._messages) and self._messages[start].get("role") != "user":
-                to_remove.append(self._messages.pop(start))
+        while self._count_tokens(temp) > self.max_tokens and len(temp) > start + 1:
+            to_remove.append(temp.pop(start))
+            while start < len(temp) and temp[start].get("role") != "user":
+                to_remove.append(temp.pop(start))
 
         if not to_remove:
             return
@@ -166,10 +170,12 @@ class ConversationMemory:
             ])
             new_summary = response.choices[0].message.content.strip()
         except Exception:
-            return  # 摘要失败不影响主流程（消息已被 pop，本轮放弃压缩）
+            return  # LLM 失败，self._messages 未被修改，消息完整保留
 
-        # 摘要作为 assistant 消息插入被删位置的"原位"
-        # 这样 system prompt 永远不变，已固化的摘要成为历史前缀，cache 友好
+        # LLM 成功 → 真正删除 + 插入摘要在原位
+        for _ in range(len(to_remove)):
+            self._messages.pop(start)
+
         self._messages.insert(start, {
             "role": "assistant",
             "content": f"[对话摘要] {new_summary}",
