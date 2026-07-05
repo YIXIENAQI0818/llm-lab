@@ -5,15 +5,14 @@
 """
 
 from .token_chunker import TokenChunker, load_markdown_files
-from ..agent_framework.embedding_store import EmbeddingStore
-
+from ..agent_framework.chroma_store import ChromaDBStore
 
 class KnowledgeBase:
     """离线索引 + 在线检索的知识库。"""
 
     COLLECTION = "documents"
 
-    def __init__(self, es: EmbeddingStore):
+    def __init__(self, es : ChromaDBStore):
         self._es = es
         self._tc = TokenChunker()
 

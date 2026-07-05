@@ -5,8 +5,6 @@ from .chroma_store import ChromaDBStore
 from .llm import LLMClient
 from .memory import ConversationMemory
 from ..capabilities.tool_registry import ToolRegistry
-
-# 延迟导入避免循环依赖，实际使用前才 import
 from ..capabilities.demo_tools import create_demo_tools
 from ..capabilities.long_term_memory import LongTermMemory
 from ..capabilities.plan_manager import PlanManager
@@ -33,7 +31,7 @@ def _sanitize(text: str) -> str:
 class Agent:
     """Agent 主循环。
 
-    内部自建 LLM、EmbeddingStore、ConversationMemory、ToolRegistry、
+    内部自建 LLM、ChromaDBStore、ConversationMemory、ToolRegistry、
     LongTermMemory、PlanManager、KnowledgeBase。
     对外只暴露 chat() / reset()。
     """

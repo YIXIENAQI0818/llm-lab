@@ -5,4 +5,5 @@ numpy
 tiktoken
 chromadb
 rank-bm25
+jieba
 FlagEmbedding

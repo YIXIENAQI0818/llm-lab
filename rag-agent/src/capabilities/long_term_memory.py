@@ -4,8 +4,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from ..agent_framework.embedding_store import EmbeddingStore
-
+from ..agent_framework.chroma_store import ChromaDBStore
 
 class LongTermMemory:
     """长期记忆管理器 — JSON 持久化 + embedding 语义检索。
@@ -18,7 +17,7 @@ class LongTermMemory:
     _MIN_SCORE_THRESHOLD = 0.3
     _CONSOLIDATE_INTERVAL = 10
 
-    def __init__(self, es: EmbeddingStore, llm_client):
+    def __init__(self, es : ChromaDBStore, llm_client):
         self._dir = Path("agent_memory")
         self._file = self._dir / "agent_memory.json"
         self._es = es

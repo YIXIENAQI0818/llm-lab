@@ -1,6 +1,8 @@
 import json
 from typing import Callable
 
+from ..agent_framework.chroma_store import ChromaDBStore
+
 
 class ToolRegistry:
     """工具注册中心：注册、查询、执行。
@@ -8,7 +10,7 @@ class ToolRegistry:
     支持基于 embedding 的工具过滤：工具多时，只把语义最相关的发给 LLM。
     """
 
-    def __init__(self, es, tools: list[dict] | None = None):
+    def __init__(self, es : ChromaDBStore, tools: list[dict] | None = None):
         self._tools: dict[str, dict] = {}
         self._es = es
         if tools:

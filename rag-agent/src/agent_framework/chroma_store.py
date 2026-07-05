@@ -1,4 +1,4 @@
-"""ChromaDB 向量存储 — 接口对齐 EmbeddingStore，底层持久化。
+"""ChromaDB 向量存储，底层持久化。
 
 每个逻辑 collection 映射到一个 ChromaDB collection。
 数据存于 chroma_data/ 目录，进程重启后仍在。
@@ -32,7 +32,7 @@ class BGEEmbedding(EmbeddingFunction):
 
 
 class ChromaDBStore:
-    """向量存储，接口对齐 EmbeddingStore。"""
+    """向量存储，ChromaDB 持久化后端。"""
 
     def __init__(self):
         self._client = PersistentClient(path="chroma_data")
