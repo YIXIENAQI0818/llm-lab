@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from src.agent_framework import Agent, EmbeddingStore, LLMClient
-from src.capabilities import LongTermMemory, PlanManager
+from src.capabilities import LongTermMemory, PlanManager, KnowledgeBase
 from src.capabilities.demo_tools import create_demo_tools
 
 SYSTEM_PROMPT = (
@@ -46,7 +46,12 @@ def main():
     )
     plan_mgr = PlanManager()
 
-    tools = [] if args.no_tools else create_demo_tools(plan_mgr=plan_mgr, ltm=ltm)
+    # 离线索引：启动时自动索引 data/ 下的 markdown 文档
+    kb = KnowledgeBase(embedding_store)
+    index_result = kb.index("data/")
+    print(f"📚 {index_result}")
+
+    tools = [] if args.no_tools else create_demo_tools(plan_mgr=plan_mgr, ltm=ltm, kb=kb)
 
     agent = Agent(
         llm=llm_client,
