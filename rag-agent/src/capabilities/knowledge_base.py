@@ -15,7 +15,7 @@ class KnowledgeBase:
 
     def __init__(self, embedding_store: EmbeddingStore,
                  chunk_tokens: int = 256, overlap_tokens: int = 64):
-        self._es = embedding_store
+        self._embedding = embedding_store
         self._chunker = TokenChunker(chunk_tokens=chunk_tokens,
                                      overlap_tokens=overlap_tokens)
 
@@ -25,22 +25,27 @@ class KnowledgeBase:
         if not docs:
             return f"在 {path} 下未找到 .md 文件"
 
-        total_chunks = 0
-        details = []
+        all_chunks = []
         for doc in docs:
             chunks = self._chunker.chunk(doc["content"], doc["name"])
             for c in chunks:
-                self._es.add(self.COLLECTION, c["text"], c["meta"])
-            total_chunks += len(chunks)
-            details.append(f"  {doc['name']}: {len(chunks)} chunks")
+                all_chunks.append({"text": c["text"], "meta": c["meta"]})
 
-        return f"索引完成：{len(docs)} 个文件 → {total_chunks} 个片段\n" + "\n".join(details)
+        # 批量编码 + 重建 collection，比逐个 add 快
+        self._embedding.rebuild(self.COLLECTION, all_chunks)
+
+        counts = {}
+        for c in all_chunks:
+            src = c["meta"]["source"]
+            counts[src] = counts.get(src, 0) + 1
+        details = "\n".join(f"  {src}: {n} chunks" for src, n in counts.items())
+        return f"索引完成：{len(docs)} 个文件 → {len(all_chunks)} 个片段\n{details}"
 
     def search(self, query: str, top_k: int = 3,
                threshold: float = 0.3) -> list[dict]:
         """语义检索文档片段（供 search_docs 工具调用）。"""
-        return self._es.search(self.COLLECTION, query, top_k=top_k,
-                               threshold=threshold)
+        return self._embedding.search(self.COLLECTION, query, top_k=top_k,
+                                      threshold=threshold)
 
     def is_empty(self) -> bool:
-        return self._es.collection_size(self.COLLECTION) == 0
+        return self._embedding.collection_size(self.COLLECTION) == 0
