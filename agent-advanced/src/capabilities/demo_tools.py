@@ -52,6 +52,10 @@ def _save_memory_stub(content: str) -> str:
     return "记忆已保存"
 
 
+def _recall_memory_stub(query: str) -> str:
+    return "未找到相关记忆"
+
+
 def _make_plan_stub(task: str, steps: list) -> str:
     return "计划已创建"
 
@@ -125,6 +129,21 @@ def create_demo_tools(plan_mgr=None, ltm=None) -> list[dict]:
             "fn": _save_memory_stub,
         },
         {
+            "name": "recall_memory",
+            "description": (
+                "从长期记忆中检索与查询相关的信息。"
+                "当用户问及你不知道或不确定的事实（名字、账号、偏好、经历、计划等），"
+                "应优先调用此工具搜索记忆。即使觉得可能不知道，也建议先查一下再回答。"
+                "返回与查询最相关的 top-3 条记忆。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string", "description": "检索关键词或问题"}},
+                "required": ["query"],
+            },
+            "fn": _recall_memory_stub,
+        },
+        {
             "name": "make_plan",
             "description": (
                 "当任务复杂需要多步协调时，先制定分步计划再执行。"
@@ -183,6 +202,18 @@ def create_demo_tools(plan_mgr=None, ltm=None) -> list[dict]:
                 _ltm.add(content)
                 return "记忆已保存"
             t["fn"] = _save
+
+        elif t["name"] == "recall_memory" and ltm is not None:
+            def _recall(query, _ltm=ltm):
+                results = _ltm.search(query, top_k=3)
+                if not results:
+                    return "未找到相关记忆"
+                lines = []
+                for r in results:
+                    ts = r.get("timestamp", "")[:10]
+                    lines.append(f"- [{ts}] {r['content']}")
+                return "\n".join(lines)
+            t["fn"] = _recall
 
         elif t["name"] == "make_plan":
             def _make_plan(task, steps, _pm=plan_mgr):

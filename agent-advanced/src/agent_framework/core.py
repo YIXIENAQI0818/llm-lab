@@ -89,17 +89,12 @@ class Agent:
     # ---- 内部 ----
 
     def _collect_fixed_context(self, user_input: str) -> list[str]:
-        """收集本轮 chat 不变的上下文块（记忆等），只算一次。
+        """收集本轮 chat 不变的上下文块，只算一次。
 
-        摘要已作为 assistant 消息固化在 messages 历史中，不再注入 system prompt。
+        摘要已作为 assistant 消息固化在 messages 历史中。
+        LTM 记忆通过 recall_memory 工具由 LLM 按需拉取，不再注入 system prompt。
         """
-        blocks = []
-        if self.ltm:
-            recalled = self.ltm.search(user_input, top_k=3)
-            if recalled:
-                lines = "\n".join(f"- {r['content']}" for r in recalled)
-                blocks.append(f"[记忆]\n{lines}")
-        return blocks
+        return []
 
     def _rebuild_system(self, fixed_blocks: list[str]):
         """用固定上下文 + 最新 plan 状态重建 system prompt（每轮调用）。"""
