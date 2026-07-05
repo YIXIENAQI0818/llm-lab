@@ -55,7 +55,9 @@ class Agent:
                 self.memory.get_messages(),
                 tools=self.tools.get_definitions(
                     query=user_input, top_k=self.tool_top_k,
-                    always_include={"recall_memory", "check_plan"},
+                    always_include={"recall_memory", "check_plan", "make_plan",
+                                   "complete_step", "add_plan_step", "modify_plan_step",
+                                   "save_memory"},
                 ),
             )
             msg = response.choices[0].message
