@@ -93,15 +93,6 @@ class EmbeddingStore:
         vb = self._model.encode(b, normalize_embeddings=True)
         return float(va @ vb)
 
-    # ---- 单条修改 ----
-
-    def update(self, collection: str, index: int, text: str, meta: dict | None = None):
-        """更新 collection 中第 index 条（只重编码这一条）。"""
-        vec = self._model.encode(text, normalize_embeddings=True)
-        self._collections[collection][index] = {
-            "text": text, "meta": meta or {}, "vec": vec,
-        }
-
     def delete(self, collection: str, index: int):
         """删除 collection 中第 index 条。"""
         del self._collections[collection][index]
