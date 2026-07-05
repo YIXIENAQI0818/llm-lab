@@ -93,6 +93,20 @@ class EmbeddingStore:
         vb = self._model.encode(b, normalize_embeddings=True)
         return float(va @ vb)
 
+    def batch_similarity(self, collection: str, query: str) -> tuple[list[float], list[dict]]:
+        """一次编码 query，矩阵乘法计算与 collection 中所有项的相似度。
+
+        Returns:
+            (scores, items): scores[i] 为 query 与 items[i] 的余弦相似度
+        """
+        items = self._collections.get(collection, [])
+        if not items:
+            return [], []
+        query_vec = self._model.encode(query, normalize_embeddings=True)
+        all_vecs = np.stack([item["vec"] for item in items])
+        scores = (all_vecs @ query_vec).tolist()
+        return scores, items
+
     def delete(self, collection: str, index: int):
         """删除 collection 中第 index 条。"""
         del self._collections[collection][index]

@@ -174,14 +174,11 @@ class LongTermMemory:
     def _find_related(self, content: str) -> list[int]:
         """用 bi-encoder 找出所有与 content 语义相近的已有记忆索引。
 
-        阈值设宽容（0.6），宁可多找不少找——LLM 的 _merge_batch 会做最终裁决。
+        一次编码 + 矩阵乘法，避免逐条 encode。
+        阈值设宽容（0.6），宁可多找不少找。
         """
-        related = []
-        for idx, m in enumerate(self._memories):
-            score = self._embedding.similarity(content, m["content"])
-            if score >= self._SIMILARITY_THRESHOLD:
-                related.append(idx)
-        return related
+        scores, _ = self._embedding.batch_similarity("memories", content)
+        return [i for i, s in enumerate(scores) if s >= self._SIMILARITY_THRESHOLD]
 
     _MERGE_BATCH_PROMPT = (
         "你是记忆整理助手。以下是一组长期记忆，它们可能在语义上有重叠。\n"
