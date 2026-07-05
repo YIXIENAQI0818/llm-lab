@@ -11,11 +11,11 @@ class LongTermMemory:
 
     记忆以 JSON 数组形式存储在文件中，支持增删查。
     检索使用 embedding 余弦相似度 + 时间衰减。
-    去重使用 cross-encoder 精排 + LLM 批量合并。
+    去重使用 bi-encoder 粗筛 + LLM 批量合并。
     """
 
-    _CROSS_THRESHOLD = 0.85  # cross-encoder 去重阈值（同实体 >0.9，同域 ~0.9，无关 <0.5）
-    _MIN_SCORE_THRESHOLD = 0.3  # 检索时低于此值的记忆不返回
+    _SIMILARITY_THRESHOLD = 0.6   # bi-encoder 去重粗筛阈值（宽容，LLM 做最终裁决）
+    _MIN_SCORE_THRESHOLD = 0.3    # 检索时低于此值的记忆不返回
 
     def __init__(self, embedding_store: EmbeddingStore, storage_dir: str = "agent_memory",
                  llm_client=None):
@@ -172,11 +172,14 @@ class LongTermMemory:
     # ---- 内部 ----
 
     def _find_related(self, content: str) -> list[int]:
-        """用 cross-encoder 找出所有与 content 相关的已有记忆索引。"""
+        """用 bi-encoder 找出所有与 content 语义相近的已有记忆索引。
+
+        阈值设宽容（0.6），宁可多找不少找——LLM 的 _merge_batch 会做最终裁决。
+        """
         related = []
         for idx, m in enumerate(self._memories):
-            score = self._embedding.cross_similarity(content, m["content"])
-            if score >= self._CROSS_THRESHOLD:
+            score = self._embedding.similarity(content, m["content"])
+            if score >= self._SIMILARITY_THRESHOLD:
                 related.append(idx)
         return related
 
