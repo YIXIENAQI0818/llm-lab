@@ -41,7 +41,6 @@ class Agent:
     def __init__(
         self,
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
-        max_rounds: int = 50,
     ):
         self.llm = LLMClient()
         self.es = EmbeddingStore()
@@ -56,14 +55,13 @@ class Agent:
 
         self.cm = ConversationMemory(self.llm, system_prompt=system_prompt)
 
-        self.max_rounds = max_rounds
-        self.tool_top_k = tool_top_k
+    _MAX_ROUNDS = 50
 
     def chat(self, user_input: str, verbose: bool = True) -> str:
         """执行一轮对话，返回最终回复。"""
         self.cm.add_user(user_input)
 
-        for _ in range(self.max_rounds):
+        for _ in range(self._MAX_ROUNDS):
             response = self.llm.chat(
                 self.cm.get_messages(),
                 tools=self.tr.get_definitions(
