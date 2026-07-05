@@ -89,10 +89,11 @@ class Agent:
     # ---- 内部 ----
 
     def _collect_fixed_context(self, user_input: str) -> list[str]:
-        """收集本轮 chat 不变的上下文块（记忆等），只算一次。"""
+        """收集本轮 chat 不变的上下文块（记忆等），只算一次。
+
+        摘要已作为 assistant 消息固化在 messages 历史中，不再注入 system prompt。
+        """
         blocks = []
-        if self.memory.summary:
-            blocks.append(f"[对话摘要]\n{self.memory.summary}")
         if self.ltm:
             recalled = self.ltm.search(user_input, top_k=3)
             if recalled:

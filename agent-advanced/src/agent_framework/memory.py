@@ -99,11 +99,13 @@ class ConversationMemory:
     # ---- 裁剪 ----
 
     def trim(self, max_tokens: int):
-        """纯裁剪（无 LLM 时用），保留 system prompt + 最近消息。"""
+        """纯裁剪（无 LLM 时用），按轮次 pop 最老的消息。"""
         start = 1 if self._messages and self._messages[0]["role"] == "system" else 0
         while self._count_tokens(self._messages) > max_tokens and len(self._messages) > start + 1:
             self._messages.pop(start)
-            self._clean_tool_orphans(start)
+            # 连带 pop 同一轮次的后续消息
+            while start < len(self._messages) and self._messages[start].get("role") != "user":
+                self._messages.pop(start)
 
     # ---- 内部 ----
 
@@ -122,11 +124,6 @@ class ConversationMemory:
                 total += len(self._enc.encode(m["tool_call_id"]))
         return total
 
-    def _clean_tool_orphans(self, start: int):
-        """删除 start 位置开始的孤立 tool 消息（assistant tool_calls 已被裁）。"""
-        while start < len(self._messages) and self._messages[start].get("role") == "tool":
-            self._messages.pop(start)
-
     def _auto_trim(self):
         if self.max_tokens is None:
             return
@@ -136,14 +133,20 @@ class ConversationMemory:
             self.trim(self.max_tokens)
 
     def _summarize_and_trim(self):
-        """裁剪前把被删消息发给 LLM 摘要，结果累积到 _summary。"""
-        start = 1 if self._messages and self._messages[0]["role"] == "system" else 0
+        """超限时按完整轮次 pop，直到不超限为止。
 
-        # 收集需要被删的消息
+        每轮 pop：user + 后续非 user 消息（assistant+tc、tool），保证不拆散。
+        """
+        start = 1 if self._messages and self._messages[0]["role"] == "system" else 0
+        if len(self._messages) - start <= 1:
+            return
+
+        # pop 完整轮次，直到不超限或只剩 1 轮
         to_remove = []
         while self._count_tokens(self._messages) > self.max_tokens and len(self._messages) > start + 1:
             to_remove.append(self._messages.pop(start))
-            self._clean_tool_orphans(start)
+            while start < len(self._messages) and self._messages[start].get("role") != "user":
+                to_remove.append(self._messages.pop(start))
 
         if not to_remove:
             return
@@ -154,16 +157,24 @@ class ConversationMemory:
             for m in to_remove
         )
 
-        # LLM 摘要
-        prompt = f"已有的摘要：{self._summary}\n\n新增对话：\n{text}" if self._summary else text
+        # LLM 摘要：已有摘要 + 新对话 → 合并成一份
+        prompt = f"已有摘要：{self._summary}\n\n新对话：\n{text}" if self._summary else text
         try:
             response = self._llm.chat([
                 {"role": "system", "content": self.SUMMARIZE_PROMPT},
-                {"role": "user", "content": f"请摘要：\n\n{prompt}"},
+                {"role": "user", "content": f"请摘要以下对话：\n\n{prompt}"},
             ])
-            self._summary = response.choices[0].message.content.strip()
+            new_summary = response.choices[0].message.content.strip()
         except Exception:
-            pass  # 摘要失败不影响主流程
+            return  # 摘要失败不影响主流程（消息已被 pop，本轮放弃压缩）
+
+        # 摘要作为 assistant 消息插入被删位置的"原位"
+        # 这样 system prompt 永远不变，已固化的摘要成为历史前缀，cache 友好
+        self._messages.insert(start, {
+            "role": "assistant",
+            "content": f"[对话摘要] {new_summary}",
+        })
+        self._summary = new_summary
 
 
 def _strip_nones(messages: list[dict]) -> list[dict]:
