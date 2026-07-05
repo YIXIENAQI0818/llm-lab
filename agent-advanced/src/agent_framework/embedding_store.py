@@ -1,27 +1,34 @@
 import numpy as np
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer, CrossEncoder
 
 
 class EmbeddingStore:
     """通用语义存储，支持多 collection 隔离。
 
     每个 collection 内按余弦相似度检索，跨 collection 可计算文本相似度。
-    一个进程内通常只创建一个实例，SentenceTransformer 通过类变量单例共享，避免重复加载。
+    一个进程内通常只创建一个实例，SentenceTransformer + CrossEncoder 通过类变量单例共享。
 
     用法:
         store = EmbeddingStore()
         store.add("tools", "查询天气", {"name": "get_weather"})
-        store.add("memories", "用户叫小明", {})
         results = store.search("tools", "今天天气怎么样", top_k=3)
-        sim = store.similarity("程序员", "写代码")
+        sim = store.similarity("程序员", "写代码")       # bi-encoder
+        score = store.cross_similarity("我叫程宣赫", "用户叫程宣赫")  # cross-encoder
     """
 
     _singleton_model = None
+    _singleton_cross_model = None
 
-    def __init__(self, model_name: str = "BAAI/bge-small-zh-v1.5"):
+    def __init__(self, model_name: str = "BAAI/bge-small-zh-v1.5",
+                 cross_model_name: str = "BAAI/bge-reranker-base"):
         if EmbeddingStore._singleton_model is None:
             EmbeddingStore._singleton_model = SentenceTransformer(model_name)
         self._model = EmbeddingStore._singleton_model
+
+        if EmbeddingStore._singleton_cross_model is None:
+            EmbeddingStore._singleton_cross_model = CrossEncoder(cross_model_name)
+        self._cross_model = EmbeddingStore._singleton_cross_model
+
         self._collections: dict[str, list[dict]] = {}
 
     # ---- 写入 ----
@@ -88,10 +95,18 @@ class EmbeddingStore:
         return results
 
     def similarity(self, a: str, b: str) -> float:
-        """计算两段文本的余弦相似度（0~1）。"""
+        """bi-encoder 余弦相似度（0~1），快速但粗糙。"""
         va = self._model.encode(a, normalize_embeddings=True)
         vb = self._model.encode(b, normalize_embeddings=True)
         return float(va @ vb)
+
+    def cross_similarity(self, a: str, b: str) -> float:
+        """cross-encoder 语义相似度，比 bi-encoder 更准确。
+
+        两段文本同时喂给模型，直接输出相关性分数。
+        更慢但更准，适合去重和精排等对准确性要求高的场景。
+        """
+        return float(self._cross_model.predict([(a, b)])[0])
 
     # ---- 单条修改 ----
 

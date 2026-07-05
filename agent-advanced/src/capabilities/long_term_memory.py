@@ -11,11 +11,11 @@ class LongTermMemory:
 
     记忆以 JSON 数组形式存储在文件中，支持增删查。
     检索使用 embedding 余弦相似度 + 时间衰减。
-    支持 embedding 相似度去重和 LLM 驱动的记忆合并。
+    去重使用 cross-encoder 精排 + LLM 批量合并。
     """
 
-    _SIMILARITY_THRESHOLD = 0.75  # embedding 余弦相似度阈值（短中文文本偏高）
-    _MIN_SCORE_THRESHOLD = 0.3   # 检索时低于此值的记忆不返回
+    _CROSS_THRESHOLD = 0.85  # cross-encoder 去重阈值（同实体 >0.9，同域 ~0.9，无关 <0.5）
+    _MIN_SCORE_THRESHOLD = 0.3  # 检索时低于此值的记忆不返回
 
     def __init__(self, embedding_store: EmbeddingStore, storage_dir: str = "agent_memory",
                  llm_client=None):
@@ -35,31 +35,44 @@ class LongTermMemory:
     # ---- 写入 ----
 
     def add(self, content: str) -> bool:
-        """添加一条记忆。自动去重：如与已有记忆高度相似则覆盖。
+        """添加一条记忆。cross-encoder 粗筛 + LLM 精判，自动去重合并。
 
         Returns:
-            True 表示新增，False 表示覆盖了已有记忆。
+            True 表示新增，False 表示合并/替换了已有记忆。
         """
         content = content.strip()
         now = datetime.now().isoformat(timespec="seconds")
 
-        # embedding 相似度去重
-        for idx, m in enumerate(self._memories):
-            if self._content_similarity(content, m["content"]) >= self._SIMILARITY_THRESHOLD:
-                if self._llm:
-                    merged = self._merge_pair(m["content"], content)
-                else:
-                    merged = content
-                m["content"] = merged
-                m["timestamp"] = now
-                self._save()
-                self._embedding.update("memories", idx, merged, {"timestamp": now})
-                return False
+        # cross-encoder 粗筛：找到所有与 content 相关的已有记忆
+        related = self._find_related(content)
 
-        self._memories.append({"content": content, "timestamp": now})
-        self._embedding.add("memories", content, {"timestamp": now})
+        if not related:
+            # 全新记忆，直接加入
+            self._memories.append({"content": content, "timestamp": now})
+            self._embedding.add("memories", content, {"timestamp": now})
+            self._save()
+            return True
+
+        # 批量整理：所有相关旧记忆 + 新记忆 → LLM 判断合并/拆分
+        to_merge = [self._memories[i]["content"] for i in related]
+        to_merge.append(content)
+
+        if self._llm and len(to_merge) > 1:
+            merged_list = self._merge_batch(to_merge)
+        else:
+            merged_list = [content]
+
+        # 从后往前删旧记忆（索引不变）
+        for i in sorted(related, reverse=True):
+            self._memories.pop(i)
+            self._embedding.delete("memories", i)
+
+        # 写入整理后的记忆（可能多条）
+        for m in merged_list:
+            self._memories.append({"content": m, "timestamp": now})
+            self._embedding.add("memories", m, {"timestamp": now})
         self._save()
-        return True
+        return False
 
     def forget(self, index: int):
         """删除指定序号的记忆（序号从 0 开始）。"""
@@ -158,25 +171,42 @@ class LongTermMemory:
 
     # ---- 内部 ----
 
-    def _content_similarity(self, a: str, b: str) -> float:
-        """两条记忆文本的语义相似度（0~1）。"""
-        return self._embedding.similarity(a, b)
+    def _find_related(self, content: str) -> list[int]:
+        """用 cross-encoder 找出所有与 content 相关的已有记忆索引。"""
+        related = []
+        for idx, m in enumerate(self._memories):
+            score = self._embedding.cross_similarity(content, m["content"])
+            if score >= self._CROSS_THRESHOLD:
+                related.append(idx)
+        return related
 
-    _MERGE_PAIR_PROMPT = (
-        "你是记忆整理助手。以下是两条关于同一个事实的长期记忆，旧记忆和新记忆有重叠但不完全一样。"
-        "请将它们合并成一条简洁的记忆（一句话，中文），保留双方各自独有的重要信息。"
-        "直接输出合并后的记忆文本，不要加任何前缀或标点包裹。"
+    _MERGE_BATCH_PROMPT = (
+        "你是记忆整理助手。以下是一组长期记忆，它们可能在语义上有重叠。\n"
+        "请将这些记忆整理为简洁的记忆列表。\n\n"
+        "规则：\n"
+        "- 确实关于同一事实/实体的多条记忆 → 合并为一条，保留所有独有信息\n"
+        "- 关于不同主题的记忆 → 各自独立保留\n"
+        "- 每条记忆一句话，中文，20字以内最佳\n"
+        "- 不要编造原始记忆里不存在的信息\n\n"
+        "直接输出 JSON 数组，格式：[{\"content\": \"...\"}, ...]"
     )
 
-    def _merge_pair(self, old: str, new: str) -> str:
-        """用 LLM 将新旧记忆合并为一条。"""
+    def _merge_batch(self, contents: list[str]) -> list[str]:
+        """用 LLM 将相关记忆批量整理，返回合并/拆分后的记忆列表。"""
+        items = "\n".join(f"- {c}" for c in contents)
         messages = [
-            {"role": "system", "content": self._MERGE_PAIR_PROMPT},
-            {"role": "user", "content": f"旧记忆：{old}\n\n新记忆：{new}"},
+            {"role": "system", "content": self._MERGE_BATCH_PROMPT},
+            {"role": "user", "content": f"请整理以下记忆：\n\n{items}"},
         ]
         response = self._llm.chat(messages)
-        merged = response.choices[0].message.content.strip()
-        return merged or new  # LLM 返回空则保留新的
+        text = response.choices[0].message.content
+
+        parsed = _extract_json_array(text)
+        if parsed and isinstance(parsed, list):
+            return [item["content"].strip() for item in parsed
+                    if isinstance(item, dict) and "content" in item]
+        # 解析失败则保留原样
+        return contents
 
     def _rebuild_embedding_index(self):
         """从当前记忆列表重建 EmbeddingStore 中的 memories collection。"""
