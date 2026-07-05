@@ -132,22 +132,27 @@ class ConversationMemory:
         else:
             self.trim(self.max_tokens)
 
+    TRIM_TARGET_RATIO = 0.7  # 裁剪到 max_tokens * 70%，留 30% 缓冲
+
     def _summarize_and_trim(self):
-        """超限时按完整轮次 pop，直到不超限为止。
+        """超限时按完整轮次 pop，一次性裁到 max_tokens * 70%。
 
         每轮 pop：user + 后续非 user 消息（assistant+tc、tool），保证不拆散。
-
         先用临时副本模拟 pop 找出要删的消息，LLM 摘要成功后才真正删除。
         如果 LLM 调用失败，self._messages 保持原样，不丢数据。
+
+        裁到 70% 而非刚好不超限，避免下一轮新消息进来马上又触发摘要。
         """
         start = 1 if self._messages and self._messages[0]["role"] == "system" else 0
         if len(self._messages) - start <= 1:
             return
 
+        target = int(self.max_tokens * self.TRIM_TARGET_RATIO)
+
         # 在临时副本上模拟 pop，找出要删的消息（不修改 self._messages）
         temp = list(self._messages)
         to_remove = []
-        while self._count_tokens(temp) > self.max_tokens and len(temp) > start + 1:
+        while self._count_tokens(temp) > target and len(temp) > start + 1:
             to_remove.append(temp.pop(start))
             while start < len(temp) and temp[start].get("role") != "user":
                 to_remove.append(temp.pop(start))
