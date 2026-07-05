@@ -65,13 +65,9 @@ class EmbeddingStore:
         Returns:
             [{"score": float, "text": str, "meta": dict}, ...] 按 score 降序
         """
-        items = self._collections.get(collection, [])
+        scores, items = self.batch_similarity(collection, query)
         if not items:
             return []
-
-        query_vec = self._model.encode(query, normalize_embeddings=True)
-        all_vecs = np.stack([item["vec"] for item in items])
-        scores = (all_vecs @ query_vec)  # 归一化向量，点积即余弦相似度
 
         # 排序取 top_k
         idxs = np.argsort(scores)[::-1][:top_k]
