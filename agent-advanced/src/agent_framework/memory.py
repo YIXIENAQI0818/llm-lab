@@ -153,13 +153,15 @@ class ConversationMemory:
         if not to_remove:
             return
 
-        # 拼接被删消息
+        # 拼接被删消息（跳过旧的摘要消息，避免和新摘要重复）
         text = "\n".join(
             f"{m['role']}: {m.get('content', '')[:300]}"
             for m in to_remove
+            if not (isinstance(m.get("content"), str)
+                    and m["content"].startswith("[对话摘要]"))
         )
 
-        # LLM 摘要：已有摘要 + 新对话 → 合并成一份
+        # 旧摘要 + 新对话 → LLM 合并为一份
         prompt = f"已有摘要：{self._summary}\n\n新对话：\n{text}" if self._summary else text
         try:
             response = self._llm.chat([
