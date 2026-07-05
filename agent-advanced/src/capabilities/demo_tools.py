@@ -72,7 +72,7 @@ def _add_plan_step_stub(desc: str) -> str:
     return "步骤已追加"
 
 
-def _modify_plan_step_stub(step: int, desc: str) -> str:
+def _modify_plan_step_stub(step: int, desc: str, restart: bool = False) -> str:
     return "步骤已修改"
 
 
@@ -197,12 +197,17 @@ def create_demo_tools(plan_mgr=None, ltm=None) -> list[dict]:
         },
         {
             "name": "modify_plan_step",
-            "description": "修改当前计划中某个步骤的描述。",
+            "description": (
+                "修改当前计划中某个步骤的描述。"
+                "小改（修正措辞、补充细节）用 restart=false。"
+                "方向性大改（换项目、换方案）用 restart=true，会重置后续步骤。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "step": {"type": "integer", "description": "要修改的步骤编号（从1开始）"},
                     "desc": {"type": "string", "description": "新的步骤描述"},
+                    "restart": {"type": "boolean", "description": "是否重置该步骤及后续步骤为未完成"},
                 },
                 "required": ["step", "desc"],
             },
@@ -270,10 +275,10 @@ def create_demo_tools(plan_mgr=None, ltm=None) -> list[dict]:
             t["fn"] = _add_ps
 
         elif t["name"] == "modify_plan_step":
-            def _modify_ps(step, desc, _pm=plan_mgr):
+            def _modify_ps(step, desc, restart=False, _pm=plan_mgr):
                 if not _pm:
                     return "计划功能未启用"
-                return _pm.modify_step(step, desc)
+                return _pm.modify_step(step, desc, restart=restart)
             t["fn"] = _modify_ps
 
     return tools

@@ -57,8 +57,12 @@ class PlanManager:
         self._save()
         return f"已追加步骤 {len(plan['steps'])}：{desc}"
 
-    def modify_step(self, step: int, desc: str) -> str:
-        """修改指定步骤的描述。"""
+    def modify_step(self, step: int, desc: str, restart: bool = False) -> str:
+        """修改指定步骤的描述。
+
+        restart=False: 仅修改描述，不影响进度（小修小改）
+        restart=True: 重置该步骤及后续步骤为未完成（方向性大改）
+        """
         if not self.active:
             return "没有活跃计划。"
         plan = self.active
@@ -66,6 +70,13 @@ class PlanManager:
         if not (0 <= idx < len(plan["steps"])):
             return f"步骤 {step} 不存在（共 {len(plan['steps'])} 步）。"
         plan["steps"][idx]["desc"] = desc
+        if restart:
+            for i in range(idx, len(plan["steps"])):
+                plan["steps"][i]["status"] = "○"
+            plan["current_step"] = idx
+            plan["steps"][idx]["status"] = "→"
+            self._save()
+            return f"步骤 {step} 已更新并重启。后续步骤已重置，请从步骤 {step} 重新开始。"
         self._save()
         return f"步骤 {step} 已更新。"
 
