@@ -60,6 +60,10 @@ def _make_plan_stub(task: str, steps: list) -> str:
     return "计划已创建"
 
 
+def _check_plan_stub() -> str:
+    return "当前没有活跃计划"
+
+
 def _complete_step_stub(step: int) -> str:
     return "步骤已完成"
 
@@ -144,6 +148,18 @@ def create_demo_tools(plan_mgr=None, ltm=None) -> list[dict]:
             "fn": _recall_memory_stub,
         },
         {
+            "name": "check_plan",
+            "description": (
+                "查看当前活跃计划的完整状态，包括所有步骤及其完成情况。"
+                "当不确定当前计划进度或忘记下一步该做什么时调用。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+            "fn": _check_plan_stub,
+        },
+        {
             "name": "make_plan",
             "description": (
                 "当任务复杂需要多步协调时，先制定分步计划再执行。"
@@ -214,6 +230,13 @@ def create_demo_tools(plan_mgr=None, ltm=None) -> list[dict]:
                     lines.append(f"- [{ts}] {r['content']}")
                 return "\n".join(lines)
             t["fn"] = _recall
+
+        elif t["name"] == "check_plan" and plan_mgr is not None:
+            def _check_plan(_pm=plan_mgr):
+                if not _pm.is_active:
+                    return "当前没有活跃计划"
+                return _pm.format_context()
+            t["fn"] = _check_plan
 
         elif t["name"] == "make_plan":
             def _make_plan(task, steps, _pm=plan_mgr):

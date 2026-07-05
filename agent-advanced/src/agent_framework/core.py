@@ -45,20 +45,17 @@ class Agent:
         self.ltm = long_term_memory
         self.plan_mgr = plan_mgr
         self.tool_top_k = tool_top_k
-        self._base_system = system_prompt or ""
 
     def chat(self, user_input: str, verbose: bool = True) -> str:
         """执行一轮对话，返回最终回复。"""
         self.memory.add_user(user_input)
 
         for _ in range(self.max_rounds):
-            self._rebuild_system()
-
             response = self.llm.chat(
                 self.memory.get_messages(),
                 tools=self.tools.get_definitions(
                     query=user_input, top_k=self.tool_top_k,
-                    always_include={"recall_memory"},
+                    always_include={"recall_memory", "check_plan"},
                 ),
             )
             msg = response.choices[0].message
@@ -83,12 +80,5 @@ class Agent:
         """清空对话历史，保留 system prompt 和已注册的工具。"""
         self.memory.clear()
 
-    # ---- 内部 ----
-
-    def _rebuild_system(self):
-        """每轮重建 system prompt（当前仅处理 plan 状态，后续可能迁移到工具）。"""
-        full = self._base_system
-        if self.plan_mgr and self.plan_mgr.is_active:
-            full += "\n\n" + self.plan_mgr.format_context()
-
-        self.memory.add_system(full)
+    # system prompt 在 __init__ 中通过 ConversationMemory 设置后不再变动。
+    # LTM、plan 均通过工具由 LLM 按需拉取，不注入 system prompt。
