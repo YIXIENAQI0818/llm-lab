@@ -4,7 +4,7 @@
 检索通过 search_docs 工具供 LLM 调用。
 """
 
-from .chunker import TokenChunker, load_markdown_files
+from .token_chunker import TokenChunker, load_markdown_files
 from ..agent_framework.embedding_store import EmbeddingStore
 
 

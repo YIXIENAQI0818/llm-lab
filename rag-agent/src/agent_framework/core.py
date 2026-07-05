@@ -4,7 +4,7 @@ import re
 from .chroma_store import ChromaDBStore
 from .llm import LLMClient
 from .memory import ConversationMemory
-from .tools import ToolRegistry
+from ..capabilities.tool_registry import ToolRegistry
 
 # 延迟导入避免循环依赖，实际使用前才 import
 from ..capabilities.demo_tools import create_demo_tools
