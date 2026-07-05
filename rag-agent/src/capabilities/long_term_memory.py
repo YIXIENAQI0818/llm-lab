@@ -29,11 +29,23 @@ class LongTermMemory:
         self._dir.mkdir(parents=True, exist_ok=True)
         if self._file.exists():
             self._memories = json.loads(self._file.read_text(encoding="utf-8"))
-            self._rebuild_embedding_index()
-            if self._CONSOLIDATE_INTERVAL > 0:
-                self.consolidate()
         else:
             self._save()
+        self.build()
+        if self._memories and self._CONSOLIDATE_INTERVAL > 0:
+            self.consolidate()
+
+    # ---- 索引管理 ----
+
+    def build(self):
+        """首次建立向量索引（启动时调用）。已有数据则跳过。"""
+        if self._es.collection_size("memories") > 0:
+            return
+        self.reindex()
+
+    def reindex(self):
+        """强制从 JSON 重建向量索引。"""
+        self._rebuild_embedding_index()
 
     # ---- 写入 ----
 
@@ -159,7 +171,7 @@ class LongTermMemory:
         ]
 
         self._save()
-        self._rebuild_embedding_index()
+        self.reindex()
         self._add_since_consolidate = 0
         return before - len(self._memories)
 

@@ -21,9 +21,9 @@ class KnowledgeBase:
         """首次索引（启动时调用）。已有数据则跳过。"""
         if not self.is_empty():
             return "知识库已有数据，跳过索引"
-        return self.index(path)
+        return self.reindex(path)
 
-    def index(self, path: str = "data/") -> str:
+    def reindex(self, path: str = "data/") -> str:
         """强制重建索引（删旧 + 重新分块写入）。"""
         docs = load_markdown_files(path)
         if not docs:
