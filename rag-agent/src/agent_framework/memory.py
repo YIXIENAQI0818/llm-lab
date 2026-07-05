@@ -18,14 +18,12 @@ class ConversationMemory:
         "如果之前已经有摘要，新摘要应和旧摘要合并，不要重复相同信息。"
     )
 
-    def __init__(self, system_prompt: str | None = None, max_tokens: int | None = None,
-                 llm_client=None):
+    def __init__(self, llm_client, system_prompt: str, max_tokens: int = 100000):
         self._messages: list[dict] = []
         self.max_tokens = max_tokens
         self._llm = llm_client
         self._summary = ""
-        if system_prompt:
-            self.add_system(system_prompt)
+        self.add_system(system_prompt)
 
     # ---- 写入 ----
 

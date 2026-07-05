@@ -10,9 +10,9 @@ class ToolRegistry:
     支持基于 embedding 的工具过滤：工具多时，只把语义最相关的发给 LLM。
     """
 
-    def __init__(self, embedding_store: EmbeddingStore, tools: list[dict] | None = None):
+    def __init__(self, es: EmbeddingStore, tools: list[dict] | None = None):
         self._tools: dict[str, dict] = {}
-        self._embedding = embedding_store
+        self._es = es
         if tools:
             for t in tools:
                 self.register(**t)
@@ -30,9 +30,9 @@ class ToolRegistry:
             },
             "fn": fn,
         }
-        self._embedding.add("tools", description, {"name": name})
+        self._es.add("tools", description, {"name": name})
 
-    def get_definitions(self, query: str | None = None, top_k: int | None = None,
+    def get_definitions(self, query: str | None = None, top_k: int = 5,
                         always_include: set[str] | None = None) -> list[dict]:
         """返回 OpenAI 格式的工具定义列表。
 
@@ -40,7 +40,7 @@ class ToolRegistry:
         always_include 中的工具始终包含，不受过滤影响。
         """
         if query and top_k and len(self._tools) > top_k:
-            results = self._embedding.search("tools", query, top_k=top_k)
+            results = self._es.search("tools", query, top_k=top_k)
             names = {r["meta"]["name"] for r in results}
             if always_include:
                 names.update(always_include)

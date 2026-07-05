@@ -1,26 +1,25 @@
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
+# 可用 Embedding 模型:
+#   BAAI/bge-small-zh-v1.5 — 中文优化，512 维，轻量（当前使用）
+#   BAAI/bge-large-zh-v1.5 — 中文优化，1024 维，效果更好但更慢
+#   BAAI/bge-m3 — 多语言，支持中英文混合，dense+sparse 双向量
+
 
 class EmbeddingStore:
     """通用语义存储，支持多 collection 隔离。
 
     每个 collection 内按余弦相似度检索，跨 collection 可计算文本相似度。
     一个进程内通常只创建一个实例，SentenceTransformer 通过类变量单例共享。
-
-    用法:
-        store = EmbeddingStore()
-        store.add("tools", "查询天气", {"name": "get_weather"})
-        store.add("memories", "用户叫小明", {})
-        results = store.search("tools", "今天天气怎么样", top_k=3)
-        sim = store.similarity("程序员", "写代码")
     """
 
     _singleton_model = None
 
-    def __init__(self, model_name: str = "BAAI/bge-small-zh-v1.5"):
+    def __init__(self):
         if EmbeddingStore._singleton_model is None:
-            EmbeddingStore._singleton_model = SentenceTransformer(model_name)
+            EmbeddingStore._singleton_model = SentenceTransformer(
+                "BAAI/bge-small-zh-v1.5")
         self._model = EmbeddingStore._singleton_model
         self._collections: dict[str, list[dict]] = {}
 

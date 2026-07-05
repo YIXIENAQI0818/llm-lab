@@ -6,8 +6,23 @@ from .llm import LLMClient
 from .memory import ConversationMemory
 from .tools import ToolRegistry
 
+# 延迟导入避免循环依赖，实际使用前才 import
+from ..capabilities.demo_tools import create_demo_tools
+from ..capabilities.long_term_memory import LongTermMemory
+from ..capabilities.plan_manager import PlanManager
+from ..capabilities.knowledge_base import KnowledgeBase
+
 # Unicode 代理对范围 (U+D800–U+DFFF)，单独出现时不是合法 Unicode
 _SURROGATE_RE = re.compile(r"[\ud800-\udfff]")
+
+DEFAULT_SYSTEM_PROMPT = (
+    "你是一个有用的 AI 助手，可以用中文或用户使用的语言回复。"
+    "当用户提及你不知道或不确定的事实信息时，先调用 recall_memory 搜索长期记忆再回答。"
+    "当用户告诉你关于自己的重要信息（名字、偏好、计划等）时，主动调用 save_memory 保存。"
+    "如果用户的信息是对已有记忆的更新（而非完全新的事实），存入的内容应同时包含新旧信息，不要丢失旧记忆中的重要事实。"
+    "当面对需要多步协调的复杂任务时，先调用 make_plan 制定计划，再逐步执行。"
+    "在给出最终答案前，请先自我检查：数据是否准确？逻辑是否完整？是否有遗漏？如果发现问题，先修正再回答。"
+)
 
 
 def _sanitize(text: str) -> str:
@@ -18,69 +33,64 @@ def _sanitize(text: str) -> str:
 class Agent:
     """Agent 主循环。
 
-    组装 LLM、Memory、Tools，以及外部注入的能力（LTM、PlanManager）。
-    对外暴露简洁的 chat() 接口。
+    内部自建 LLM、EmbeddingStore、ConversationMemory、ToolRegistry、
+    LongTermMemory、PlanManager、KnowledgeBase。
+    对外只暴露 chat() / reset()。
     """
 
     def __init__(
         self,
-        llm: LLMClient | None = None,
-        tools: list[dict] | None = None,
-        system_prompt: str | None = None,
+        system_prompt: str = DEFAULT_SYSTEM_PROMPT,
         max_rounds: int = 50,
-        long_term_memory=None,
-        plan_mgr=None,
-        tool_top_k: int | None = None,
-        embedding_store=None,
-        max_tokens: int | None = None,
     ):
-        self.llm = llm or LLMClient()
-        self.memory = ConversationMemory(system_prompt, max_tokens=max_tokens,
-                                         llm_client=self.llm)
+        self.llm = LLMClient()
+        self.es = EmbeddingStore()
 
-        es = embedding_store if embedding_store is not None else EmbeddingStore()
-        self.tools = ToolRegistry(es, tools)
+        self.ltm = LongTermMemory(self.es, llm_client=self.llm)
+        self.pm = PlanManager()
+        self.kb = KnowledgeBase(self.es)
+        self.kb.index()
+
+        tools = create_demo_tools(pm=self.pm, ltm=self.ltm, kb=self.kb)
+        self.tr = ToolRegistry(self.es, tools)
+
+        self.cm = ConversationMemory(self.llm, system_prompt=system_prompt)
 
         self.max_rounds = max_rounds
-        self.ltm = long_term_memory
-        self.plan_mgr = plan_mgr
         self.tool_top_k = tool_top_k
 
     def chat(self, user_input: str, verbose: bool = True) -> str:
         """执行一轮对话，返回最终回复。"""
-        self.memory.add_user(user_input)
+        self.cm.add_user(user_input)
 
         for _ in range(self.max_rounds):
             response = self.llm.chat(
-                self.memory.get_messages(),
-                tools=self.tools.get_definitions(
-                    query=user_input, top_k=self.tool_top_k,
+                self.cm.get_messages(),
+                tools=self.tr.get_definitions(
+                    query=user_input,
                     always_include={"recall_memory", "check_plan", "make_plan",
                                    "complete_step", "add_plan_step", "modify_plan_step",
-                                   "save_memory"},
+                                   "save_memory", "search_docs"},
                 ),
             )
             msg = response.choices[0].message
 
             if msg.tool_calls:
-                self.memory.add_assistant(msg)
+                self.cm.add_assistant(msg)
                 for tc in msg.tool_calls:
-                    result = self.tools.execute(
+                    result = self.tr.execute(
                         tc.function.name,
                         json.loads(tc.function.arguments),
                     )
-                    self.memory.add_tool_result(tc.id, result)
+                    self.cm.add_tool_result(tc.id, result)
                     if verbose:
                         print(f"🔧 [{tc.function.name}] → {_sanitize(result)}")
             else:
-                self.memory.add_assistant(msg)
+                self.cm.add_assistant(msg)
                 return _sanitize(msg.content or "")
 
         return "达到最大轮次，停止。"
 
     def reset(self):
         """清空对话历史，保留 system prompt 和已注册的工具。"""
-        self.memory.clear()
-
-    # system prompt 在 __init__ 中通过 ConversationMemory 设置后不再变动。
-    # LTM、plan 均通过工具由 LLM 按需拉取，不注入 system prompt。
+        self.cm.clear()

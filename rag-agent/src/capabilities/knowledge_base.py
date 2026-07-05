@@ -13,13 +13,11 @@ class KnowledgeBase:
 
     COLLECTION = "documents"
 
-    def __init__(self, embedding_store: EmbeddingStore,
-                 chunk_tokens: int = 256, overlap_tokens: int = 64):
-        self._embedding = embedding_store
-        self._chunker = TokenChunker(chunk_tokens=chunk_tokens,
-                                     overlap_tokens=overlap_tokens)
+    def __init__(self, es: EmbeddingStore):
+        self._es = es
+        self._tc = TokenChunker()
 
-    def index(self, path: str) -> str:
+    def index(self, path: str = "data/") -> str:
         """索引目录下所有 .md 文件（启动时调用，非 LLM 工具）。"""
         docs = load_markdown_files(path)
         if not docs:
@@ -27,12 +25,12 @@ class KnowledgeBase:
 
         all_chunks = []
         for doc in docs:
-            chunks = self._chunker.chunk(doc["content"], doc["name"])
+            chunks = self._tc.chunk(doc["content"], doc["name"])
             for c in chunks:
                 all_chunks.append({"text": c["text"], "meta": c["meta"]})
 
         # 批量编码 + 重建 collection，比逐个 add 快
-        self._embedding.rebuild(self.COLLECTION, all_chunks)
+        self._es.rebuild(self.COLLECTION, all_chunks)
 
         counts = {}
         for c in all_chunks:
@@ -44,8 +42,8 @@ class KnowledgeBase:
     def search(self, query: str, top_k: int = 3,
                threshold: float = 0.3) -> list[dict]:
         """语义检索文档片段（供 search_docs 工具调用）。"""
-        return self._embedding.search(self.COLLECTION, query, top_k=top_k,
+        return self._es.search(self.COLLECTION, query, top_k=top_k,
                                       threshold=threshold)
 
     def is_empty(self) -> bool:
-        return self._embedding.collection_size(self.COLLECTION) == 0
+        return self._es.collection_size(self.COLLECTION) == 0

@@ -1,7 +1,6 @@
-"""示例工具集 — 供 CLI 和 notebook 共用。
+"""示例工具集 — Agent 内部调用，构建工具列表。
 
-工具函数 + 定义 + 绑定逻辑全部集中在这里，
-CLI 只需一行 create_demo_tools(agent_ref, ltm) 拿到绑好的工具列表。
+工具函数 + 定义 + 绑定逻辑全部集中在这里。
 """
 
 import json
@@ -84,14 +83,8 @@ def _search_docs_stub(query: str, top_k: int = 3) -> str:
 # 绑定逻辑 + 工具列表
 # ============================================================
 
-def create_demo_tools(plan_mgr=None, ltm=None, kb=None) -> list[dict]:
-    """创建绑定好的示例工具列表。
-
-    Args:
-        plan_mgr: PlanManager 实例，None 时不启用计划工具
-        ltm: LongTermMemory 实例，None 时不启用 save_memory
-        kb: KnowledgeBase 实例，None 时不启用 search_docs
-    """
+def create_demo_tools(pm, ltm, kb) -> list[dict]:
+    """创建绑定好的工具列表。"""
 
     tools = [
         {
@@ -241,13 +234,13 @@ def create_demo_tools(plan_mgr=None, ltm=None, kb=None) -> list[dict]:
     # ---- 绑定需要外部实例的工具 ----
 
     for t in tools:
-        if t["name"] == "save_memory" and ltm is not None:
+        if t["name"] == "save_memory":
             def _save(content, _ltm=ltm):
                 _ltm.add(content)
                 return "记忆已保存"
             t["fn"] = _save
 
-        elif t["name"] == "recall_memory" and ltm is not None:
+        elif t["name"] == "recall_memory":
             def _recall(query, _ltm=ltm):
                 results = _ltm.search(query, top_k=3)
                 if not results:
@@ -259,17 +252,15 @@ def create_demo_tools(plan_mgr=None, ltm=None, kb=None) -> list[dict]:
                 return "\n".join(lines)
             t["fn"] = _recall
 
-        elif t["name"] == "check_plan" and plan_mgr is not None:
-            def _check_plan(_pm=plan_mgr):
+        elif t["name"] == "check_plan":
+            def _check_plan(_pm=pm):
                 if not _pm.is_active:
                     return "当前没有活跃计划"
                 return _pm.format_context()
             t["fn"] = _check_plan
 
         elif t["name"] == "make_plan":
-            def _make_plan(task, steps, _pm=plan_mgr):
-                if not _pm:
-                    return "计划功能未启用"
+            def _make_plan(task, steps, _pm=pm):
                 if _pm.is_active:
                     return "已有活跃计划。请先完成当前计划或调用 update_plan。"
                 cleaned = []
@@ -284,27 +275,21 @@ def create_demo_tools(plan_mgr=None, ltm=None, kb=None) -> list[dict]:
             t["fn"] = _make_plan
 
         elif t["name"] == "complete_step":
-            def _complete_step(step, _pm=plan_mgr):
-                if not _pm:
-                    return "计划功能未启用"
+            def _complete_step(step, _pm=pm):
                 return _pm.complete_step(step)
             t["fn"] = _complete_step
 
         elif t["name"] == "add_plan_step":
-            def _add_ps(desc, _pm=plan_mgr):
-                if not _pm:
-                    return "计划功能未启用"
+            def _add_ps(desc, _pm=pm):
                 return _pm.add_step(desc)
             t["fn"] = _add_ps
 
         elif t["name"] == "modify_plan_step":
-            def _modify_ps(step, desc, restart=False, _pm=plan_mgr):
-                if not _pm:
-                    return "计划功能未启用"
+            def _modify_ps(step, desc, restart=False, _pm=pm):
                 return _pm.modify_step(step, desc, restart=restart)
             t["fn"] = _modify_ps
 
-        elif t["name"] == "search_docs" and kb is not None:
+        elif t["name"] == "search_docs":
             def _search_docs(query, top_k=3, _kb=kb):
                 results = _kb.search(query, top_k=top_k)
                 if not results:
@@ -318,9 +303,3 @@ def create_demo_tools(plan_mgr=None, ltm=None, kb=None) -> list[dict]:
             t["fn"] = _search_docs
 
     return tools
-
-
-def create_demo_tools_no_memory(plan_mgr=None) -> list[dict]:
-    """创建不带 save_memory 的工具列表。"""
-    tools = create_demo_tools(plan_mgr=plan_mgr, ltm=None)
-    return [t for t in tools if t["name"] != "save_memory"]

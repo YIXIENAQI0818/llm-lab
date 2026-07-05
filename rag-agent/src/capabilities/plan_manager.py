@@ -8,8 +8,8 @@ class PlanManager:
     和 LongTermMemory 对称：一个管记忆，一个管计划。
     """
 
-    def __init__(self, storage_dir: str = "agent_memory/plans"):
-        self._dir = Path(storage_dir)
+    def __init__(self):
+        self._dir = Path("agent_memory/plans")
         self._file = self._dir / "active.json"
         self._done_dir = self._dir / "done"
         self.active: dict | None = self._load()

@@ -7,39 +7,34 @@
 import tiktoken
 from pathlib import Path
 
+# tiktoken 编码模型选择:
+#   cl100k_base — GPT-4 / GPT-3.5 使用的编码，中英文通用（当前使用）
+#   如换用其他模型，修改 _MODEL 即可
+_MODEL = "cl100k_base"
+
+# 分块参数
+_CHUNK_TOKENS = 256   # 每个 chunk 的 token 数
+_OVERLAP_TOKENS = 64  # 窗口重叠 token 数（25%）
+
 
 class TokenChunker:
     """按 token 数对文档进行滑动窗口分块，支持 overlap。"""
 
-    def __init__(self, chunk_tokens: int = 256, overlap_tokens: int = 64,
-                 model: str = "cl100k_base"):
-        self.chunk_tokens = chunk_tokens
-        self.overlap_tokens = overlap_tokens
-        self._enc = tiktoken.get_encoding(model)
+    def __init__(self):
+        self._enc = tiktoken.get_encoding(_MODEL)
 
     def chunk(self, text: str, source_name: str = "") -> list[dict]:
-        """将文本切分为带 overlap 的 token 窗口。
-
-        Args:
-            text: 原始文本
-            source_name: 来源文件名
-
-        Returns:
-            [{"text": str, "meta": {"source": str, "chunk_index": int,
-             "token_start": int, "token_end": int}}, ...]
-        """
+        """将文本切分为带 overlap 的 token 窗口。"""
         token_ids = self._enc.encode(text)
         total = len(token_ids)
         if total == 0:
             return []
 
         chunks = []
-        step = self.chunk_tokens - self.overlap_tokens
-        if step <= 0:
-            raise ValueError("overlap_tokens must be less than chunk_tokens")
+        step = _CHUNK_TOKENS - _OVERLAP_TOKENS
 
         for i, start in enumerate(range(0, total, step)):
-            end = min(start + self.chunk_tokens, total)
+            end = min(start + _CHUNK_TOKENS, total)
             chunk_ids = token_ids[start:end]
             chunk_text = self._enc.decode(chunk_ids)
             chunks.append({
@@ -61,14 +56,7 @@ class TokenChunker:
 
 
 def load_markdown_files(path: str) -> list[dict]:
-    """读取目录下的所有 .md 文件。
-
-    Args:
-        path: 文件或目录路径
-
-    Returns:
-        [{"name": str, "content": str}, ...]
-    """
+    """读取目录下的所有 .md 文件。"""
     p = Path(path)
     files = []
     if p.is_file():

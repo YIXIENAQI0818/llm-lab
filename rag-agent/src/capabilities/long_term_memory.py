@@ -18,11 +18,10 @@ class LongTermMemory:
     _MIN_SCORE_THRESHOLD = 0.3    # 检索时低于此值的记忆不返回
     _CONSOLIDATE_INTERVAL = 10    # 每新增 N 条记忆自动触发一次 consolidate（0=禁用）
 
-    def __init__(self, embedding_store: EmbeddingStore, storage_dir: str = "agent_memory",
-                 llm_client=None):
-        self._dir = Path(storage_dir)
+    def __init__(self, es: EmbeddingStore, llm_client):
+        self._dir = Path("agent_memory")
         self._file = self._dir / "agent_memory.json"
-        self._embedding = embedding_store
+        self._es = es
         self._llm = llm_client
         self._add_since_consolidate = 0
         self._memories: list[dict] = []
@@ -32,8 +31,8 @@ class LongTermMemory:
             self._memories = json.loads(self._file.read_text(encoding="utf-8"))
             self._rebuild_embedding_index()
             # 启动时触发一次 consolidate，处理跨会话累积的记忆碎片
-            if self._llm and self._CONSOLIDATE_INTERVAL > 0:
-                self.consolidate(self._llm)
+            if self._CONSOLIDATE_INTERVAL > 0:
+                self.consolidate()
         else:
             self._save()
 
@@ -54,7 +53,7 @@ class LongTermMemory:
         if not related:
             # 全新记忆，直接加入
             self._memories.append({"content": content, "timestamp": now})
-            self._embedding.add("memories", content, {"timestamp": now})
+            self._es.add("memories", content, {"timestamp": now})
             self._save()
             self._maybe_consolidate()
             return True
@@ -63,7 +62,7 @@ class LongTermMemory:
         to_merge = [self._memories[i]["content"] for i in related]
         to_merge.append(content)
 
-        if self._llm and len(to_merge) > 1:
+        if len(to_merge) > 1:
             merged_list = self._merge_batch(to_merge)
         else:
             merged_list = [content]
@@ -71,12 +70,12 @@ class LongTermMemory:
         # 从后往前删旧记忆（索引不变）
         for i in sorted(related, reverse=True):
             self._memories.pop(i)
-            self._embedding.delete("memories", i)
+            self._es.delete("memories", i)
 
         # 写入整理后的记忆（可能多条）
         for m in merged_list:
             self._memories.append({"content": m, "timestamp": now})
-            self._embedding.add("memories", m, {"timestamp": now})
+            self._es.add("memories", m, {"timestamp": now})
         self._save()
         self._maybe_consolidate()
         return False
@@ -86,7 +85,7 @@ class LongTermMemory:
         if 0 <= index < len(self._memories):
             self._memories.pop(index)
             self._save()
-            self._embedding.delete("memories", index)
+            self._es.delete("memories", index)
 
     # ---- 读取 ----
 
@@ -98,7 +97,7 @@ class LongTermMemory:
         if not self._memories or not query.strip():
             return []
 
-        results = self._embedding.search(
+        results = self._es.search(
             "memories", query, top_k=len(self._memories), threshold=0.0,
         )
 
@@ -145,7 +144,7 @@ class LongTermMemory:
 
 直接输出 JSON 数组，格式：[{"content": "..."}, ...]"""
 
-    def consolidate(self, llm_client) -> int:
+    def consolidate(self) -> int:
         """调用 LLM 对所有记忆做合并去重。返回合并前后数量差。"""
         if len(self._memories) <= 1:
             return 0
@@ -161,7 +160,7 @@ class LongTermMemory:
             {"role": "user", "content": f"请整理以下记忆：\n\n{memory_text}"},
         ]
 
-        response = llm_client.chat(messages)
+        response = self._llm.chat(messages)
         text = response.choices[0].message.content
 
         cleaned = _extract_json_array(text)
@@ -183,11 +182,11 @@ class LongTermMemory:
 
     def _maybe_consolidate(self):
         """每新增 N 条记忆自动触发一次 consolidate。_CONSOLIDATE_INTERVAL=0 则禁用。"""
-        if not self._llm or self._CONSOLIDATE_INTERVAL <= 0:
+        if self._CONSOLIDATE_INTERVAL <= 0:
             return
         self._add_since_consolidate += 1
         if self._add_since_consolidate >= self._CONSOLIDATE_INTERVAL:
-            self.consolidate(self._llm)
+            self.consolidate()
             self._add_since_consolidate = 0
 
     def _find_related(self, content: str) -> list[int]:
@@ -196,7 +195,7 @@ class LongTermMemory:
         一次编码 + 矩阵乘法，避免逐条 encode。
         阈值设宽容（0.6），宁可多找不少找。
         """
-        scores, _ = self._embedding.batch_similarity("memories", content)
+        scores, _ = self._es.batch_similarity("memories", content)
         return [i for i, s in enumerate(scores) if s >= self._SIMILARITY_THRESHOLD]
 
     _MERGE_BATCH_PROMPT = (
@@ -233,7 +232,7 @@ class LongTermMemory:
             {"text": m["content"], "meta": {"timestamp": m["timestamp"]}}
             for m in self._memories
         ]
-        self._embedding.rebuild("memories", items)
+        self._es.rebuild("memories", items)
 
     def _save(self):
         self._file.write_text(

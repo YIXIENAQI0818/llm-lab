@@ -7,46 +7,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from src.agent_framework import Agent, EmbeddingStore, LLMClient
-from src.capabilities import LongTermMemory, PlanManager, KnowledgeBase
-from src.capabilities.demo_tools import create_demo_tools
+from src.agent_framework.core import Agent
 
-SYSTEM_PROMPT = (
-    "你是一个有用的 AI 助手，可以用中文或用户使用的语言回复。"
-    "当用户提及你不知道或不确定的事实信息时，先调用 recall_memory 搜索长期记忆再回答。"
-    "当用户告诉你关于自己的重要信息（名字、偏好、计划等）时，主动调用 save_memory 保存。"
-    "如果用户的信息是对已有记忆的更新（而非完全新的事实），存入的内容应同时包含新旧信息，不要丢失旧记忆中的重要事实。"
-    "当面对需要多步协调的复杂任务时，先调用 make_plan 制定计划，再逐步执行。"
-    "在给出最终答案前，请先自我检查：数据是否准确？逻辑是否完整？是否有遗漏？如果发现问题，先修正再回答。"
-)
 
 # 清洗终端输入时可能产生的代理字符碎片（WSL 删除中文时的残留）
 _SURROGATE_RE = re.compile(r"[\ud800-\udfff]")
 
 
 def main():
-    # 创建共享的基础设施
-    embedding_store = EmbeddingStore()
-    llm_client = LLMClient()
-    ltm = LongTermMemory(embedding_store=embedding_store, llm_client=llm_client)
-    plan_mgr = PlanManager()
-
-    # 离线索引：启动时自动索引 data/ 下的 markdown 文档
-    kb = KnowledgeBase(embedding_store)
-    index_result = kb.index("data/")
-    print(f"📚 {index_result}")
-
-    tools = create_demo_tools(plan_mgr=plan_mgr, ltm=ltm, kb=kb)
-
-    agent = Agent(
-        llm=llm_client,
-        tools=tools, system_prompt=SYSTEM_PROMPT,
-        long_term_memory=ltm, plan_mgr=plan_mgr,
-        tool_top_k=5, embedding_store=embedding_store,
-        max_tokens=100000,
-    )
-
-    _print_startup(agent, ltm, tools)
+    agent = Agent()
+    _print_startup(agent)
 
     while True:
         try:
@@ -69,16 +39,16 @@ def main():
             print(f"❌ 错误: {e}\n")
 
 
-def _print_startup(agent: Agent, ltm, tools: list):
+def _print_startup(agent: Agent):
     print("🤖 Agent CLI — 输入消息开始对话")
-    print("   /exit 退出  /clear 清空历史  /history 查看历史  /memories 查看记忆  /plan <任务> 手动计划  /help 帮助/n")
-    print(f"   📐 Token 上限: {agent.memory.max_tokens}（tiktoken 精确计数，超限自动裁剪）")
-    print(f"   🧠 长期记忆: {len(ltm.list_all())} 条")
+    print("   /exit 退出  /clear 清空历史  /history 查看历史  /memories 查看记忆  /plan <任务> 手动计划  /help 帮助")
+    print(f"   📐 Token 上限: {agent.cm.max_tokens}（tiktoken 精确计数，超限自动裁剪）")
+    print(f"   🧠 长期记忆: {len(agent.ltm.list_all())} 条")
     print("   /remember <内容>  手动存储记忆  /forget <序号>  删除记忆")
-    if agent.plan_mgr.is_active:
-        print(f"   📋 活跃计划: {agent.plan_mgr.active['task']}")
-    tools_list = ", ".join(t["name"] for t in tools)
-    print(f"   可用工具: {tools_list} (过滤 top_k={agent.tool_top_k})")
+    if agent.pm.is_active:
+        print(f"   📋 活跃计划: {agent.pm.active['task']}")
+    tools_list = ", ".join(agent.tr.list_tools())
+    print(f"   可用工具: {tools_list}")
     print()
 
 
@@ -127,7 +97,7 @@ def _handle_command(cmd: str, agent: Agent):
 
     elif action == "/consolidate":
         before = len(agent.ltm.list_all())
-        removed = agent.ltm.consolidate(agent.llm)
+        removed = agent.ltm.consolidate()
         after = len(agent.ltm.list_all())
         print(f"记忆合并完成：{before} → {after}（合并了 {removed} 条）\n")
 
@@ -136,9 +106,9 @@ def _handle_command(cmd: str, agent: Agent):
             print("用法: /plan <任务描述>\n")
         else:
             task = parts[1]
-            if agent.plan_mgr.is_active:
+            if agent.pm.is_active:
                 print("(旧计划已归档)")
-                agent.plan_mgr.clear()
+                agent.pm.clear()
             print(f"开始规划：{task}")
             reply = agent.chat(
                 f"请为以下任务制定分步计划，调用 make_plan 工具：{task}"
@@ -162,7 +132,7 @@ def _handle_command(cmd: str, agent: Agent):
 
 
 def _show_history(agent: Agent):
-    msgs = agent.memory.get_messages()
+    msgs = agent.cm.get_messages()
     if not msgs:
         print("(无历史)\n")
         return
@@ -173,7 +143,7 @@ def _show_history(agent: Agent):
         if m.get("tool_calls"):
             tool_info = f" [调用: {', '.join(tc['function']['name'] for tc in m['tool_calls'])}]"
         print(f"  [{i}] {role}{tool_info}: {content}")
-    stats = agent.memory.stats()
+    stats = agent.cm.stats()
     print(f"\n  📊 消息数: {stats['n_messages']}, Token: {stats['tokens']} (tiktoken)\n")
 
 
