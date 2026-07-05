@@ -2,7 +2,10 @@
 
 每个逻辑 collection 映射到一个 ChromaDB collection。
 数据存于 chroma_data/ 目录，进程重启后仍在。
+所有记录使用随机 UUID 作为 ChromaDB ID。
 """
+
+import uuid
 
 import numpy as np
 from chromadb import EmbeddingFunction, PersistentClient
@@ -34,15 +37,15 @@ class ChromaDBStore:
     def __init__(self):
         self._client = PersistentClient(path="chroma_data")
         self._ef = BGEEmbedding()
-        self._counters: dict[str, int] = {}
 
     # ---- 写入 ----
 
     def add(self, collection: str, text: str, meta: dict | None = None):
         col = self._get_or_create(collection)
-        idx = self._counters.get(collection, 0)
-        col.add(documents=[text], metadatas=[meta or {}], ids=[str(idx)])
-        self._counters[collection] = idx + 1
+        meta = meta or {}
+        # 如果 meta 里有 id 就用它，否则自动生成
+        mid = meta.get("id", str(uuid.uuid4()))
+        col.add(documents=[text], metadatas=[meta], ids=[mid])
 
     def rebuild(self, collection: str, items: list[dict]):
         """批量重建 collection（删旧 + 批量写入）。"""
@@ -52,7 +55,6 @@ class ChromaDBStore:
             pass
 
         if not items:
-            self._counters.pop(collection, None)
             return
 
         col = self._client.create_collection(
@@ -63,14 +65,14 @@ class ChromaDBStore:
 
         texts = [item["text"] for item in items]
         metas = [item.get("meta", {}) for item in items]
-        ids = [str(i) for i in range(len(items))]
+        ids = [m.get("id", str(uuid.uuid4())) for m in metas]
 
         col.add(documents=texts, metadatas=metas, ids=ids)
-        self._counters[collection] = len(items)
 
-    def delete(self, collection: str, index: int):
+    def delete(self, collection: str, mid: str):
+        """删除指定 ID 的记录。"""
         col = self._get_or_create(collection)
-        col.delete(ids=[str(index)])
+        col.delete(ids=[mid])
 
     # ---- 读取 ----
 

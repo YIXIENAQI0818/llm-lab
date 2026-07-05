@@ -52,6 +52,7 @@ class Agent:
 
         tools = create_demo_tools(pm=self.pm, ltm=self.ltm, kb=self.kb)
         self.tr = ToolRegistry(self.es, tools)
+        self.tr.build()
 
         self.cm = ConversationMemory(self.llm, system_prompt=system_prompt)
 

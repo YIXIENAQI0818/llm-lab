@@ -1,8 +1,6 @@
 import json
 from typing import Callable
 
-from .embedding_store import EmbeddingStore
-
 
 class ToolRegistry:
     """工具注册中心：注册、查询、执行。
@@ -10,7 +8,7 @@ class ToolRegistry:
     支持基于 embedding 的工具过滤：工具多时，只把语义最相关的发给 LLM。
     """
 
-    def __init__(self, es: EmbeddingStore, tools: list[dict] | None = None):
+    def __init__(self, es, tools: list[dict] | None = None):
         self._tools: dict[str, dict] = {}
         self._es = es
         if tools:
@@ -18,7 +16,7 @@ class ToolRegistry:
                 self.register(**t)
 
     def register(self, name: str, description: str, parameters: dict, fn: Callable):
-        """注册一个工具，并自动将其描述加入 embedding 索引。"""
+        """注册一个工具到内存。描述向量索引由 build() / reindex() 统一管理。"""
         self._tools[name] = {
             "definition": {
                 "type": "function",
@@ -30,7 +28,21 @@ class ToolRegistry:
             },
             "fn": fn,
         }
-        self._es.add("tools", description, {"name": name})
+
+    def build(self):
+        """首次建立工具向量索引。已有数据则跳过。"""
+        if self._es.collection_size("tools") > 0:
+            return
+        self.reindex()
+
+    def reindex(self):
+        """强制重建工具向量索引。"""
+        items = [
+            {"text": t["definition"]["function"]["description"],
+             "meta": {"name": name}}
+            for name, t in self._tools.items()
+        ]
+        self._es.rebuild("tools", items)
 
     def get_definitions(self, query: str | None = None, top_k: int = 5,
                         always_include: set[str] | None = None) -> list[dict]:
