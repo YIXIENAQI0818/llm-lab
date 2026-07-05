@@ -17,8 +17,14 @@ class KnowledgeBase:
         self._es = es
         self._tc = TokenChunker()
 
+    def build(self, path: str = "data/") -> str:
+        """首次索引（启动时调用）。已有数据则跳过。"""
+        if not self.is_empty():
+            return "知识库已有数据，跳过索引"
+        return self.index(path)
+
     def index(self, path: str = "data/") -> str:
-        """索引目录下所有 .md 文件（启动时调用，非 LLM 工具）。"""
+        """强制重建索引（删旧 + 重新分块写入）。"""
         docs = load_markdown_files(path)
         if not docs:
             return f"在 {path} 下未找到 .md 文件"

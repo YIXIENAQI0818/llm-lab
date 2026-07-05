@@ -1,3 +1,8 @@
+"""DEPRECATED — 已被 ChromaDBStore 替代，保留仅供参考。
+
+新代码统一使用 chroma_store.ChromaDBStore。
+"""
+
 import numpy as np
 from sentence_transformers import SentenceTransformer
 

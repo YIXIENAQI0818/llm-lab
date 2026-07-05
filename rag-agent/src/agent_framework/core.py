@@ -1,7 +1,7 @@
 import json
 import re
 
-from .embedding_store import EmbeddingStore
+from .chroma_store import ChromaDBStore
 from .llm import LLMClient
 from .memory import ConversationMemory
 from .tools import ToolRegistry
@@ -43,12 +43,12 @@ class Agent:
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
     ):
         self.llm = LLMClient()
-        self.es = EmbeddingStore()
+        self.es = ChromaDBStore()
 
         self.ltm = LongTermMemory(self.es, llm_client=self.llm)
         self.pm = PlanManager()
         self.kb = KnowledgeBase(self.es)
-        self.kb.index()
+        self.kb.build()
 
         tools = create_demo_tools(pm=self.pm, ltm=self.ltm, kb=self.kb)
         self.tr = ToolRegistry(self.es, tools)

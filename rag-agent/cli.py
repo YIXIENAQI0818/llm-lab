@@ -115,6 +115,10 @@ def _handle_command(cmd: str, agent: Agent):
             )
             print(f"🤖 Agent: {reply}\n")
 
+    elif action == "/reindex":
+        result = agent.kb.index()
+        print(f"{result}\n")
+
     elif action == "/help":
         print("命令列表:")
         print("  /exit         退出程序")
@@ -124,6 +128,7 @@ def _handle_command(cmd: str, agent: Agent):
         print("  /forget       删除长期记忆")
         print("  /memories     查看所有长期记忆")
         print("  /consolidate  LLM 合并清理长期记忆")
+        print("  /reindex      强制重建知识库索引")
         print("  /plan         手动创建计划（强制覆盖旧计划）")
         print("  /help         显示此帮助\n")
 
