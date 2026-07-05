@@ -43,7 +43,7 @@ def main():
         tools=tools, system_prompt=SYSTEM_PROMPT,
         long_term_memory=ltm, plan_mgr=plan_mgr,
         tool_top_k=5, embedding_store=embedding_store,
-        max_tokens=8000,
+        max_tokens=100000,
     )
 
     _print_startup(agent, ltm, tools)
