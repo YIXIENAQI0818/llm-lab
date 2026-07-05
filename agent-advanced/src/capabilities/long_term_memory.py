@@ -86,7 +86,7 @@ class LongTermMemory:
     def search(self, query: str, top_k: int = 3) -> list[dict]:
         """检索与 query 语义最相关的 top_k 条记忆。
 
-        算法：embedding 余弦相似度 × 时间衰减，低于阈值的过滤。
+        算法：bi-encoder 余弦相似度 × 时间衰减，低于阈值的过滤。
         """
         if not self._memories or not query.strip():
             return []
