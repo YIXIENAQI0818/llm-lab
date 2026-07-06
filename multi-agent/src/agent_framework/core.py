@@ -1,5 +1,6 @@
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .chroma_store import ChromaDBStore
 from .llm import LLMClient
@@ -71,6 +72,45 @@ class Agent:
 
         self.cm = ConversationMemory(self.llm, system_prompt=system_prompt)
 
+    def _execute_tools(self, tool_calls, verbose: bool):
+        """执行工具调用。全是 delegate_task 时并行，其他串行。"""
+        names = [tc.function.name for tc in tool_calls]
+
+        if all(n == "delegate_task" for n in names):
+            self._execute_parallel(tool_calls, verbose)
+        else:
+            self._execute_serial(tool_calls, verbose)
+
+    def _execute_serial(self, tool_calls, verbose: bool):
+        for tc in tool_calls:
+            result = self.tr.execute(
+                tc.function.name,
+                json.loads(tc.function.arguments),
+            )
+            self.cm.add_tool_result(tc.id, result)
+            if verbose:
+                print(f"🔧 [{tc.function.name}] → {_sanitize(result)}")
+
+    def _execute_parallel(self, tool_calls, verbose: bool):
+        with ThreadPoolExecutor() as pool:
+            futures = {}
+            for tc in tool_calls:
+                args = json.loads(tc.function.arguments)
+                futures[pool.submit(self.tr.execute, tc.function.name, args)] = tc
+
+            for f in as_completed(futures):
+                tc = futures[f]
+                try:
+                    result = f.result()
+                except Exception as e:
+                    result = json.dumps(
+                        {"error": f"Worker 执行失败: {e}"},
+                        ensure_ascii=False,
+                    )
+                self.cm.add_tool_result(tc.id, result)
+                if verbose:
+                    print(f"🔧 [{tc.function.name}] → {_sanitize(result)}")
+
     def reindex_kb(self, force: bool = False) -> str:
         """重建知识库索引。force=True 强制覆盖已有数据。"""
         return self.kb.build_kb_index(force=force)
@@ -111,14 +151,7 @@ class Agent:
 
             if msg.tool_calls:
                 self.cm.add_assistant(msg)
-                for tc in msg.tool_calls:
-                    result = self.tr.execute(
-                        tc.function.name,
-                        json.loads(tc.function.arguments),
-                    )
-                    self.cm.add_tool_result(tc.id, result)
-                    if verbose:
-                        print(f"🔧 [{tc.function.name}] → {_sanitize(result)}")
+                self._execute_tools(msg.tool_calls, verbose)    
             else:
                 self.cm.add_assistant(msg)
                 return _sanitize(msg.content or "")
