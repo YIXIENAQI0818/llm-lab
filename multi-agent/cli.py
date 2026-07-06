@@ -116,15 +116,15 @@ def _handle_command(cmd: str, agent: Agent):
             print(f"🤖 Agent: {reply}\n")
 
     elif action == "/reindex":
-        result = agent.kb.reindex()
+        result = agent.reindex_kb(force=True)
         print(f"{result}\n")
 
     elif action == "/reindex_memories":
-        agent.ltm.reindex()
+        agent.reindex_memories(force=True)
         print("记忆索引已重建\n")
 
     elif action == "/reindex_tools":
-        agent.tr.reindex()
+        agent.reindex_tools(force=True)
         print("工具索引已重建\n")
 
     elif action == "/help":

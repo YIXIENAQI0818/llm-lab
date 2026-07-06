@@ -1,29 +1,9 @@
-"""工具注册中心 — 注册、语义查询、执行。
-
-ToolRegistry 管理当前 Agent 的工具子集。
-每个 Agent 使用独立的 ChromaDB collection，由 build_tool_index() 写入。
-"""
+"""工具注册中心 — 注册、索引、查询、执行。"""
 
 import json
 from typing import Callable
 
 from ..agent_framework.chroma_store import ChromaDBStore
-
-
-def build_tool_index(es: ChromaDBStore, all_tools: list[dict],
-                    collection: str):
-    """写入工具向量索引到指定 collection。已有数据则跳过。
-
-    all_tools 中每个元素是原始工具 dict：{name, description, parameters, fn}。
-    """
-    if es.collection_size(collection) > 0:
-        return
-    items = [
-        {"text": t["description"],
-         "meta": {"name": t["name"]}}
-        for t in all_tools
-    ]
-    es.rebuild(collection, items)
 
 
 class ToolRegistry:
@@ -56,6 +36,21 @@ class ToolRegistry:
         }
 
     # ================================================================
+    # 索引
+    # ================================================================
+
+    def build_tool_index(self, force: bool = False):
+        """写入工具向量索引。已有数据则跳过，force=True 强制重建。"""
+        if not force and self._es.collection_size(self._collection) > 0:
+            return
+        items = [
+            {"text": t["definition"]["function"]["description"],
+             "meta": {"name": t["definition"]["function"]["name"]}}
+            for t in self._tools.values()
+        ]
+        self._es.rebuild(self._collection, items)
+
+    # ================================================================
     # 查询
     # ================================================================
 
@@ -64,7 +59,6 @@ class ToolRegistry:
         """返回 OpenAI 格式的工具定义列表。
 
         工具总数 ≤ top_k 时全量返回，> top_k 时语义搜索自己的 collection。
-        搜自己的 collection 不需要过滤——搜出来的全是自己的。
         """
         if query and top_k and len(self._tools) > top_k:
             results = self._es.search(

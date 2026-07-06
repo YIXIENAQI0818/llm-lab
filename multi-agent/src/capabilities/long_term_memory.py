@@ -31,22 +31,16 @@ class LongTermMemory:
             self._memories = json.loads(self._file.read_text(encoding="utf-8"))
         else:
             self._save()
-        self.build()
-        if self._memories and self._CONSOLIDATE_INTERVAL > 0:
-            self.consolidate()
+        self.build_ltm_index()
 
     # ================================================================
     # 索引
     # ================================================================
 
-    def build(self):
-        """首次建立向量索引。已有数据则跳过。"""
-        if self._es.collection_size(self._COLLECTION) > 0:
+    def build_ltm_index(self, force: bool = False):
+        """写入记忆向量索引。已有数据则跳过，force=True 强制重建。"""
+        if not force and self._es.collection_size(self._COLLECTION) > 0:
             return
-        self.reindex()
-
-    def reindex(self):
-        """强制从 JSON 全量重建向量索引。"""
         items = [
             {"text": m["content"],
              "meta": {"id": m["id"], "timestamp": m["timestamp"]}}
@@ -183,7 +177,7 @@ class LongTermMemory:
             if isinstance(item, dict) and "content" in item
         ]
         self._save()
-        self.reindex()
+        self.build_ltm_index(force=True)
         self._add_count = 0
         return before - len(self._memories)
 

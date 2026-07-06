@@ -1,8 +1,4 @@
-"""知识库 — 离线文档索引 + 在线混合检索。
-
-build() / reindex() 由应用层在启动时调用。
-search_docs 工具供 LLM 在对话中调用。
-"""
+"""知识库 — 离线文档索引 + 在线混合检索。"""
 
 from .rag_infra.token_chunker import TokenChunker, load_markdown_files
 from .rag_infra.retriever import Retriever
@@ -22,15 +18,12 @@ class KnowledgeBase:
     # 索引
     # ================================================================
 
-    def build(self, path: str = "data/") -> str:
-        """首次索引。已有数据则只重建 BM25 跳过写入。"""
-        if not self.is_empty():
+    def build_kb_index(self, path: str = "data/", force: bool = False) -> str:
+        """写入知识库向量索引。已有数据则跳过，force=True 强制重建。"""
+        if not force and not self.is_empty():
             self._rt.build_bm25(self.COLLECTION)
             return "知识库已有数据，跳过索引"
-        return self.reindex(path)
 
-    def reindex(self, path: str = "data/") -> str:
-        """强制重建索引：清空 → 分块 → 写入 ChromaDB + BM25。"""
         docs = load_markdown_files(path)
         if not docs:
             return f"在 {path} 下未找到 .md 文件"

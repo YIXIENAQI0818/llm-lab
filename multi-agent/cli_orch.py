@@ -40,7 +40,8 @@ def main():
 def _print_startup(orch: Orchestrator):
     print("🤖 Orchestrator CLI — 多 Agent 协作模式")
     print(f"   Workers: {', '.join(orch.list_workers())}")
-    print("   /exit 退出  /clear 清空历史  /workers 查看 Worker  /help 帮助")
+    print("   /exit 退出  /clear 清空历史  /workers 查看 Worker")
+    print("   /reindex / reindex_memories / reindex_tools  /help 帮助")
     print()
 
 
@@ -59,12 +60,27 @@ def _handle_command(cmd: str, orch: Orchestrator):
     elif action == "/workers":
         print(f"可用 Worker: {', '.join(orch.list_workers())}\n")
 
+    elif action == "/reindex":
+        result = orch.reindex_kb(force=True)
+        print(f"{result}\n")
+
+    elif action == "/reindex_memories":
+        orch.reindex_memories(force=True)
+        print("记忆索引已重建\n")
+
+    elif action == "/reindex_tools":
+        orch.reindex_tools()
+        print("工具索引已重建\n")
+
     elif action == "/help":
         print("命令列表:")
-        print("  /exit     退出程序")
-        print("  /clear    清空 Orchestrator 和所有 Worker 的对话历史")
-        print("  /workers  查看可用 Worker 列表")
-        print("  /help     显示此帮助\n")
+        print("  /exit             退出程序")
+        print("  /clear            清空对话历史")
+        print("  /workers          查看可用 Worker 列表")
+        print("  /reindex          重建知识库索引")
+        print("  /reindex_memories 重建记忆索引")
+        print("  /reindex_tools    重建所有工具索引")
+        print("  /help             显示此帮助\n")
 
     else:
         print(f"未知命令: {action}，输入 /help 查看帮助\n")

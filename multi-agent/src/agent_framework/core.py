@@ -4,7 +4,7 @@ import re
 from .chroma_store import ChromaDBStore
 from .llm import LLMClient
 from .memory import ConversationMemory
-from ..capabilities.tool_registry import ToolRegistry, build_tool_index
+from ..capabilities.tool_registry import ToolRegistry
 from ..capabilities.demo_tools import builtin_tools
 from ..capabilities.long_term_memory import LongTermMemory
 from ..capabilities.plan_manager import PlanManager
@@ -51,7 +51,7 @@ class Agent:
         self.ltm = LongTermMemory(self.es, llm_client=self.llm)
         self.pm = PlanManager()
         self.kb = KnowledgeBase(self.es, llm_client=self.llm)
-        self.kb.build()
+        self.kb.build_kb_index()
 
         # 收集工具：组件工具 + 外部注入
         all_tools = builtin_tools()
@@ -66,10 +66,22 @@ class Agent:
             keep = set(tools)
             all_tools = [t for t in all_tools if t["name"] in keep]
 
-        build_tool_index(self.es, all_tools, collection=tool_collection)
         self.tr = ToolRegistry(self.es, all_tools, collection=tool_collection)
+        self.tr.build_tool_index()
 
         self.cm = ConversationMemory(self.llm, system_prompt=system_prompt)
+
+    def reindex_kb(self, force: bool = False) -> str:
+        """重建知识库索引。force=True 强制覆盖已有数据。"""
+        return self.kb.build_kb_index(force=force)
+
+    def reindex_memories(self, force: bool = False):
+        """重建长期记忆向量索引。force=True 强制覆盖已有数据。"""
+        self.ltm.build_ltm_index(force=force)
+
+    def reindex_tools(self, force: bool = False):
+        """重建工具向量索引。force=True 强制覆盖已有数据。"""
+        self.tr.build_tool_index(force=force)
 
     _MAX_ROUNDS = 50
     _ALWAYS_INCLUDE = {
