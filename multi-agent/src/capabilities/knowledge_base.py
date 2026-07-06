@@ -1,0 +1,121 @@
+"""知识库 — 离线文档索引 + 在线混合检索。
+
+build() / reindex() 由应用层在启动时调用。
+search_docs 工具供 LLM 在对话中调用。
+"""
+
+from .rag_infra.token_chunker import TokenChunker, load_markdown_files
+from .rag_infra.retriever import Retriever
+from .rag_infra.reranker import Reranker
+
+
+class KnowledgeBase:
+
+    COLLECTION = "documents"
+
+    def __init__(self, es, llm_client=None):
+        self._es = es
+        self._tc = TokenChunker()
+        self._rt = Retriever(es, llm_client, reranker=Reranker())
+
+    # ================================================================
+    # 索引
+    # ================================================================
+
+    def build(self, path: str = "data/") -> str:
+        """首次索引。已有数据则只重建 BM25 跳过写入。"""
+        if not self.is_empty():
+            self._rt.build_bm25(self.COLLECTION)
+            return "知识库已有数据，跳过索引"
+        return self.reindex(path)
+
+    def reindex(self, path: str = "data/") -> str:
+        """强制重建索引：清空 → 分块 → 写入 ChromaDB + BM25。"""
+        docs = load_markdown_files(path)
+        if not docs:
+            return f"在 {path} 下未找到 .md 文件"
+
+        all_chunks = []
+        for doc in docs:
+            for c in self._tc.chunk(doc["content"], doc["name"]):
+                all_chunks.append({"text": c["text"], "meta": c["meta"]})
+
+        self._es.rebuild(self.COLLECTION, all_chunks)
+        texts = [c["text"] for c in all_chunks]
+        metas = [c["meta"] for c in all_chunks]
+        self._rt.rebuild_bm25(self.COLLECTION, texts, metas)
+
+        counts = {}
+        for c in all_chunks:
+            src = c["meta"]["source"]
+            counts[src] = counts.get(src, 0) + 1
+        details = "\n".join(
+            f"  {src}: {n} chunks" for src, n in counts.items()
+        )
+        return f"索引完成：{len(docs)} 个文件 → {len(all_chunks)} 个片段\n{details}"
+
+    def is_empty(self) -> bool:
+        return self._es.collection_size(self.COLLECTION) == 0
+
+    # ================================================================
+    # 检索
+    # ================================================================
+
+    def search(self, query: str, strategy: str = "expand",
+               top_k: int = 5, threshold: float = 0.3) -> list[dict]:
+        """混合检索（Dense + BM25 + RRF + Cross-Encoder 精排）。"""
+        rewrite = strategy if strategy in ("expand", "decompose") else "expand"
+        return self._rt.search(
+            self.COLLECTION, query,
+            threshold=threshold, top_k=top_k, rewrite=rewrite,
+        )
+
+    # ================================================================
+    # 工具
+    # ================================================================
+
+    def get_tools(self) -> list[dict]:
+        """返回 KB 提供的工具（search_docs）。"""
+        return [
+            {
+                "name": "search_docs",
+                "description": (
+                    "在已索引的知识库中语义检索与查询最相关的文档片段。"
+                    "当用户问题需要基于已索引文档内容回答时，"
+                    "应先调用此工具检索上下文。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "检索查询，应提取用户问题的关键信息",
+                        },
+                        "strategy": {
+                            "type": "string",
+                            "enum": ["expand", "decompose"],
+                            "description": (
+                                "expand：扩展为同义词+近义词，适合概念性问题。"
+                                "decompose：拆解为独立子问题，适合多面比较。"
+                                "默认 expand。"
+                            ),
+                        },
+                    },
+                    "required": ["query"],
+                },
+                "fn": self._tool_search_docs,
+            },
+        ]
+
+    def _tool_search_docs(self, query: str, strategy: str = "expand") -> str:
+        results = self.search(query, strategy=strategy)
+        if not results:
+            return "未找到相关文档"
+        lines = []
+        for r in results:
+            src = r["meta"].get("source", "?")
+            idx = r["meta"].get("chunk_index", "?")
+            lines.append(
+                f"--- [{src}#{idx}] (score:{r['score']:.3f}) ---\n{r['text']}"
+            )
+        return "\n".join(lines)

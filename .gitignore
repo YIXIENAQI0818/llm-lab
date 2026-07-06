@@ -2,7 +2,11 @@
 __pycache__/
 .ipynb_checkpoints/
 CLAUDE.md
+**/CLAUDE.md
 memory/
+**/memory/
+.claude/
+**/.claude/
 agent_memory/
 **/agent_memory/
 chroma_data/
