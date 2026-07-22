@@ -27,7 +27,6 @@
 ```
 llm-lab/
 ├── README.md            # 本文件
-├── CLAUDE.md            # 项目级指导（开发用）
 ├── reports/             # 技术报告
 ├── <sub-project>/       # 子实验项目
 │   ├── README.md
@@ -37,11 +36,12 @@ llm-lab/
 
 ## 环境
 
-每个子项目有独立的 `.env` 和 `requirements.txt`。
+每个子项目有独立的依赖和配置。
 
 ```bash
 cd <sub-project>
 pip install -r requirements.txt
 cp .env.example .env    # 编辑 .env 填入 API Key
-python src/cli.py
 ```
+
+详见各子项目的 README。
