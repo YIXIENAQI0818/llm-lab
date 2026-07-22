@@ -29,16 +29,12 @@ cp .env.example .env
 
 ## 使用
 
-### 单轮对话
+`src/client.py` 和 `src/streaming.py` 是导入辅助模块（提供 `get_client()` 等工厂函数），不直接运行。
+
+实验通过 Jupyter 笔记本进行：
 
 ```bash
-python src/client.py
+jupyter notebook notebooks/01_single_turn.ipynb
 ```
 
-### 流式输出
-
-```bash
-python src/streaming.py
-```
-
-`notebooks/` 目录下包含对应 5 个回合的 Jupyter 实验笔记，可直接运行。
+`notebooks/` 目录下包含对应 5 个回合的实验笔记，每个可独立运行。

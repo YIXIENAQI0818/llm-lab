@@ -26,8 +26,12 @@ cp .env.example .env
 
 ## 使用
 
+`src/client.py` 是导入辅助模块（提供 API 客户端工厂函数），不直接运行。
+
+实验通过 Jupyter 笔记本进行：
+
 ```bash
 jupyter notebook notebooks/01_function_calling.ipynb
 ```
 
-`notebooks/` 目录下包含 3 个回合的实验笔记。代码集中在 `src/client.py`，每个 notebook 从中 import 所需函数。
+`notebooks/` 目录下包含 3 个回合的实验笔记，每个可独立运行。

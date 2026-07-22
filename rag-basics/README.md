@@ -29,9 +29,12 @@ cp .env.example .env
 
 ## 使用
 
+`src/client.py` 和 `src/embed.py` 是导入辅助模块（提供 API 客户端和向量化函数），不直接运行。
+
+实验通过 Jupyter 笔记本进行：
+
 ```bash
-# 分布式运行对应实验笔记本
 jupyter notebook notebooks/01_embedding.ipynb
 ```
 
-`notebooks/` 目录下包含 3 个回合的实验笔记，每步均有代码和输出说明。
+`notebooks/` 目录下包含 3 个回合的实验笔记，每个可独立运行。
