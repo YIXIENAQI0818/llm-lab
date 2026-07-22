@@ -1,53 +1,82 @@
 # agent-advanced
 
-Agent 能力深入实验。在 agent-basics 基础上，为 Agent 添加长期记忆、计划管理、对话管理等高级能力。
+Agent 能力深入实验。在 agent-basics 基础上，从零构建一个工业级单 Agent 框架：对话管理 → 长期记忆 → 计划执行 → 自我反思 → 工具发现 → 分层记忆流转。这是整个 llm-lab 中回合最多、演进最完整的子项目。
 
-## 特性
+## 实验路线
 
-- **长期记忆（LTM）**：JSON + 向量双存储，语义去重，LLM 合并重复记忆，时间衰减检索
-- **计划管理（PM）**：复杂任务分步执行，步骤自动推进，计划归档
-- **对话管理（CM）**：tiktoken 精确计数，超 token 自动摘要裁剪，无静默丢失
-- **分层记忆流转**：对话 → 短时记忆 → 长时记忆 → 知识库，自动 consolidate
+**阶段一：核心能力（01-05）**
+
+| 回合 | 主题 | 学习点 |
+|------|------|--------|
+| 01 | 框架骨架 | 可复用 Agent 类 + REPL + 短时记忆 |
+| 02 | 长期记忆 | JSON 持久化 + Jaccard 去重 + LLM 合并 |
+| 03 | 计划管理 | Plan-as-Tool：LLM 自主决定何时制定计划 |
+| 04 | 自我反思 | Prompt 驱动：一行提示词改变 LLM 行为 |
+| 05 | 工具发现 | 语义搜索匹配工具描述，按需筛选 |
+
+**阶段二：上下文工程（06-07）**
+
+| 回合 | 主题 | 学习点 |
+|------|------|--------|
+| 06 | Token 计数 + 上下文裁剪 | tiktoken 精确计数、超限自动移除旧消息 |
+| 07 | 智能摘要 + Cache 优化 | LLM 摘要写入消息、System Prompt 静态化 |
+
+**阶段三：记忆系统精炼（08-09）**
+
+| 回合 | 主题 | 学习点 |
+|------|------|--------|
+| 08 | LTM 去重合并 + 工具化 | bi-encoder 批量合并 + LLM 判断；记忆/计划按需拉取 |
+| 09 | 分层记忆流转 + 自动 Consolidate | 工作记忆 → 摘要 → LTM 自动降级 + 每 10 条触发合并 |
+
+## 技术栈
+
+- **LLM**: DeepSeek API
+- **Embedding**: BAAI/bge-small-zh-v1.5
+- **分词**: tiktoken（cl100k_base）
 
 ## 环境
-
-- Python 3.10+
-- DeepSeek API Key
-- ChromaDB（持久化向量数据库）
-- 向量模型首次运行时自动下载
-
-### 安装
 
 ```bash
 cd agent-advanced
 pip install -r requirements.txt
 cp .env.example .env
+# 编辑 .env: DEEPSEEK_API_KEY=sk-your-key-here
 ```
 
-编辑 `.env`，填入 API Key：
-
-```
-DEEPSEEK_API_KEY=sk-your-key-here
-```
-
-### 运行
+## 使用
 
 ```bash
-python src/cli.py
+python cli.py
 ```
 
-### REPL 命令
+进入 REPL 交互界面（基于 `src/agent_framework/core.py` 的 Agent 类）。
+
+### CLI 命令
 
 | 命令 | 功能 |
 |------|------|
 | `/memories` | 查看所有长期记忆 |
 | `/forget <n>` | 删除第 n 条记忆 |
+| `/remember` | 显示记忆摘要 |
 | `/plan` | 查看当前计划 |
-| `/consolidate` | 手动触发记忆合并 |
+| `/consolidate` | 手动触发 LTM 合并去重 |
 | `/history` | 查看对话历史 |
 | `/clear` | 清空对话 |
 | `/exit` | 退出 |
 
-### 实验笔记
+## 项目结构
 
-`notebooks/` 目录下包含 9 个回合的实验笔记，覆盖从基础 Agent 到分层记忆流转的完整演进。
+```
+agent-advanced/
+├── cli.py                     # REPL 入口
+├── src/
+│   ├── agent_framework/       # Agent 核心（core / llm / memory / tools）
+│   └── capabilities/          # 能力模块（LTM / PlanManager / ToolRegistry）
+├── notebooks/                 # 01-07 回合计时笔记（08-09 直接改框架源码）
+├── agent_memory/              # LTM + Plan 持久化存储（gitignored）
+└── chroma_data/               # 向量索引（gitignored）
+```
+
+## 实验笔记
+
+`notebooks/` 目录下包含 7 个回合的实验笔记。Rounds 08-09 没有独立 notebook，内容直接体现在框架源码中（`src/agent_framework/core.py`、`src/capabilities/long_term_memory.py`、`src/capabilities/plan_manager.py`）。

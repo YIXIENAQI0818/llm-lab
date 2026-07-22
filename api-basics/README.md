@@ -1,37 +1,44 @@
 # api-basics
 
-LLM API 调用基础实验。这是 llm-lab 系列的第一个子项目，学习如何使用 OpenAI 兼容 SDK 与 DeepSeek API 交互。
+LLM API 调用基础实验。学习使用 OpenAI 兼容 SDK 与 DeepSeek API 进行大模型交互，覆盖从单轮对话到参数调优的完整 API 基础。
 
-## 内容
+## 实验内容
 
-- 模型参数控制（temperature、top_p、max_tokens 等）
-- 流式输出（streaming）
-- Token 计数（tiktoken）
-- 批量处理与错误重试
+| 回合 | 主题 | 学习点 |
+|------|------|--------|
+| 01 | 单轮对话 | OpenAI SDK 基础用法、API 调用流程 |
+| 02 | System Prompt | 角色设定、指令遵循 |
+| 03 | 多轮对话 | 对话历史管理、上下文窗口 |
+| 04 | 流式输出 | Streaming、实时交互 |
+| 05 | 参数调优 | temperature、top_p、max_tokens |
+
+## 技术栈
+
+- **LLM**: DeepSeek API（`deepseek-chat`），通过 OpenAI 兼容接口调用
+- **SDK**: `openai` Python SDK
+- **环境管理**: `python-dotenv`
 
 ## 环境
-
-- Python 3.10+
-- DeepSeek API Key
-
-### 安装
 
 ```bash
 cd api-basics
 pip install -r requirements.txt
 cp .env.example .env
+# 编辑 .env: DEEPSEEK_API_KEY=sk-your-key-here
 ```
 
-编辑 `.env`，填入 API Key：
+## 使用
 
-```
-DEEPSEEK_API_KEY=sk-your-key-here
-```
-
-### 运行
+### 单轮对话
 
 ```bash
-python src/cli.py
+python src/client.py
 ```
 
-进入 REPL 交互界面，输入问题即可与大模型对话。详见 `notebooks/` 目录下的实验笔记。
+### 流式输出
+
+```bash
+python src/streaming.py
+```
+
+`notebooks/` 目录下包含对应 5 个回合的 Jupyter 实验笔记，可直接运行。

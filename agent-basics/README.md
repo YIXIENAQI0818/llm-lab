@@ -1,39 +1,33 @@
 # agent-basics
 
-Agent 与 Function Calling 基础实验。学习 LLM 工具调用机制：如何注册工具、LLM 如何选择工具、如何执行工具调用并返回结果。
+Agent 与 Function Calling 基础实验。学习 LLM 如何调用外部工具——工具定义、LLM 自主选择工具、执行结果回传并继续推理（ReAct 循环）。
 
-## 内容
+## 实验内容
 
-- OpenAI Function Calling 协议
-- 工具注册与描述编写
-- 工具调用执行循环（LLM 决策 → 工具执行 → 结果返回 → 继续推理）
-- 多工具组合调用
+| 回合 | 主题 | 学习点 |
+|------|------|--------|
+| 01 | Function Calling | 工具定义格式、LLM 决策、执行反馈 |
+| 02 | 多工具选择 | LLM 在多工具场景中自动匹配合适工具 |
+| 03 | Agent Loop | ReAct 模式：思考 → 行动 → 观察 → 继续思考 |
+
+## 技术栈
+
+- **LLM**: DeepSeek API（支持 OpenAI 兼容 Function Calling）
+- **工具**: Python 纯函数（mock weather / search / calculator）
 
 ## 环境
-
-- Python 3.10+
-- DeepSeek API Key
-
-### 安装
 
 ```bash
 cd agent-basics
 pip install -r requirements.txt
 cp .env.example .env
+# 编辑 .env: DEEPSEEK_API_KEY=sk-your-key-here
 ```
 
-编辑 `.env`，填入 API Key：
-
-```
-DEEPSEEK_API_KEY=sk-your-key-here
-```
-
-### 运行
+## 使用
 
 ```bash
-python src/cli.py
+jupyter notebook notebooks/01_function_calling.ipynb
 ```
 
-进入 REPL 后可以体验 Function Calling。比如问「北京天气怎么样」或「帮我计算 123 * 456」，Agent 会自动选择合适的工具。
-
-详见 `notebooks/` 目录下的实验笔记。
+`notebooks/` 目录下包含 3 个回合的实验笔记。代码集中在 `src/client.py`，每个 notebook 从中 import 所需函数。

@@ -1,38 +1,37 @@
 # rag-basics
 
-RAG（Retrieval-Augmented Generation）检索增强生成基础实验。学习向量检索 + 文档问答的基本流程：将文档分块、向量化存储、根据用户问题检索相关片段、交给 LLM 生成回答。
+RAG（Retrieval-Augmented Generation）检索增强生成基础实验。学习文档向量化 → 语义检索 → 增强生成的完整流程。
 
-## 内容
+## 实验内容
 
-- 文档分块（固定大小 + 滑动窗口）
-- 向量化（sentence-transformers / BGE 模型）
-- 向量检索（ChromaDB）
-- 检索结果注入 LLM 生成
+| 回合 | 主题 | 学习点 |
+|------|------|--------|
+| 01 | Embedding 基础 | 文本 → 向量、余弦相似度、语义距离 |
+| 02 | 向量检索 | 文档分块、向量索引、Top-K 检索 |
+| 03 | 完整 RAG 管线 | 检索 + 生成、来源引用 |
+
+## 技术栈
+
+- **Embedding**: `sentence-transformers` + `BAAI/bge-small-zh-v1.5`（本地模型）
+- **生成**: DeepSeek API（OpenAI 兼容 SDK）
+- **向量计算**: `numpy` + `scikit-learn`
 
 ## 环境
-
-- Python 3.10+
-- DeepSeek API Key（用于 LLM 生成）
-- 向量模型首次运行时自动下载
-
-### 安装
 
 ```bash
 cd rag-basics
 pip install -r requirements.txt
 cp .env.example .env
+# 编辑 .env: DEEPSEEK_API_KEY=sk-your-key-here
 ```
 
-编辑 `.env`，填入 API Key：
+首次运行时会自动下载 BGE 向量模型。
 
-```
-DEEPSEEK_API_KEY=sk-your-key-here
-```
-
-### 运行
+## 使用
 
 ```bash
-python src/cli.py
+# 分布式运行对应实验笔记本
+jupyter notebook notebooks/01_embedding.ipynb
 ```
 
-详见过 `notebooks/` 目录下的实验笔记。
+`notebooks/` 目录下包含 3 个回合的实验笔记，每步均有代码和输出说明。
