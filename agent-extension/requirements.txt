@@ -1,0 +1,9 @@
+openai
+python-dotenv
+sentence-transformers
+numpy
+tiktoken
+chromadb
+rank-bm25
+jieba
+FlagEmbedding

@@ -1,0 +1,6 @@
+.env
+chroma_data/
+agent_memory/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
