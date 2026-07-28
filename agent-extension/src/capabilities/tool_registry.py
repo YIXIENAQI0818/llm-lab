@@ -22,6 +22,7 @@ class ToolRegistry:
     def __init__(self, es: ChromaDBStore, components: list | None = None,
                  llm_client=None, collection: str = "tools"):
         self._tools: dict[str, dict] = {}
+        self._mcp_clients: list = []  # 持有 MCPClient 引用（用于 cleanup）
         self._es = es
         self._collection = collection
 
@@ -72,6 +73,7 @@ class ToolRegistry:
 
     def register_mcp(self, mcp_client):
         """注册 MCP — discover 工具 → 逐一 register_tool。"""
+        self._mcp_clients.append(mcp_client)
         for tool in mcp_client.discover():
             name = tool["name"]
             if mcp_client.namespace:
@@ -149,6 +151,15 @@ class ToolRegistry:
 
     def list_tools(self) -> list[str]:
         return list(self._tools.keys())
+
+    def close(self):
+        """清理 MCP 子进程。"""
+        for mcp in self._mcp_clients:
+            try:
+                mcp.close()
+            except Exception:
+                pass
+        self._mcp_clients.clear()
 
     def __len__(self):
         return len(self._tools)

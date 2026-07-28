@@ -26,6 +26,7 @@ _CRITICAL_TOOLS = {
     "make_plan", "check_plan", "complete_step", "add_plan_step",
     "modify_plan_step", "clear_plan",
     "search_docs",
+    "fetch__fetch",
 }
 
 
