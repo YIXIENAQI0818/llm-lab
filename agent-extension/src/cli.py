@@ -38,6 +38,7 @@ def _print_help():
     print("  /reindex    重建所有索引（KB 文档 + LTM 记忆 + Tools）")
     print("  /stats      查看当前对话统计")
     print("  /tools      列出已注册工具")
+    print("  /skills     列出可用 Skills")
     print("  /help       显示此帮助")
     print("  /exit       退出程序")
     print()
@@ -99,6 +100,19 @@ def _handle_command(agent: Agent, cmd: str) -> bool:
         print()
         return True
 
+    if cmd == "/skills":
+        skills = agent._skills
+        print()
+        if skills:
+            for i, s in enumerate(skills, 1):
+                print(f"  {i}. {s.name}")
+                print(f"     {s.description}")
+            print(f"\n  共 {len(skills)} 个 Skill")
+        else:
+            print("  (无 Skills)")
+        print()
+        return True
+
     print(f"未知命令: {cmd}（输入 /help 查看帮助）")
     return True
 
@@ -114,7 +128,9 @@ def main():
         traceback.print_exc()
         sys.exit(1)
 
-    print(f"[OK] Agent 就绪，{len(agent.tr)} 个工具已注册")
+    n_skills = len(agent._skills)
+    skills_info = f", {n_skills} 个 Skill" if n_skills else ""
+    print(f"[OK] Agent 就绪，{len(agent.tr)} 个工具已注册{skills_info}")
     print()
 
     try:

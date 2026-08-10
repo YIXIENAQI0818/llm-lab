@@ -7,6 +7,7 @@ from ..capabilities.tool_registry import ToolRegistry
 from ..capabilities.long_term_memory import LongTermMemory
 from ..capabilities.plan_manager import PlanManager
 from ..capabilities.knowledge_base import KnowledgeBase
+from ..capabilities.tool_infra.skill import scan_skills
 
 _SURROGATE_RE = re.compile(r"[\ud800-\udfff]")
 
@@ -27,6 +28,7 @@ _CRITICAL_TOOLS = {
     "modify_plan_step", "clear_plan",
     "search_docs",
     "fetch__fetch",
+    "Skill",
 }
 
 
@@ -64,8 +66,15 @@ class Agent:
             llm_client=self.llm,
         )
 
-        # 对话记忆
-        self.cm = ConversationMemory(self.llm, system_prompt=system_prompt)
+        # 对话记忆（Skills 列表注入 system prompt）
+        self._skills = scan_skills()
+        full_prompt = system_prompt
+        if self._skills:
+            skill_lines = "\n".join(
+                f"- {s.name}: {s.description}" for s in self._skills
+            )
+            full_prompt += f"\n\n## 可用 Skills\n{skill_lines}"
+        self.cm = ConversationMemory(self.llm, system_prompt=full_prompt)
 
     def _execute_tools(self, tool_calls, verbose: bool):
         for tc in tool_calls:

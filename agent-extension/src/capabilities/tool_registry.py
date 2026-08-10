@@ -13,7 +13,7 @@
 import json
 from ..agent_framework.chroma_store import ChromaDBStore
 from .tool_infra.local_tools import get_local_tools
-from .tool_infra.skill import get_skills, SkillRunner
+from .tool_infra.skill import scan_skills, load_skill_prompt
 from .tool_infra.mcp_client import get_mcp_clients
 
 
@@ -32,9 +32,10 @@ class ToolRegistry:
         for t in get_local_tools(components or []):
             self.register_tool(**t)
 
-        # 2. Skills
-        for skill_def in get_skills():
-            self.register_skill(skill_def, llm_client)
+        # 2. Skills（扫描 skills/ 目录，注册单个 Skill 工具）
+        skills = scan_skills()
+        if skills:
+            self._register_skill_tool(skills)
 
         # 3. MCP
         for mcp in get_mcp_clients():
@@ -61,14 +62,38 @@ class ToolRegistry:
             "fn": fn,
         }
 
-    def register_skill(self, skill_def, llm_client):
-        """注册 Skill — 内部用 SkillRunner 包成 fn → register_tool。"""
-        runner = SkillRunner(skill_def, llm_client, self)
+    def _register_skill_tool(self, skills):
+        """注册唯一的 Skill 入口工具。
+
+        description 拼接所有 Skill 的 name + description（给 LLM 做语义匹配），
+        fn 接收 name 参数，调 load_skill_prompt 从磁盘读 body。
+        """
+        skill_desc_lines = [
+            f"- {s.name}: {s.description}" for s in skills
+        ]
+        skill_names = [s.name for s in skills]
+
+        def fn(name: str) -> str:
+            prompt = load_skill_prompt(name)
+            if prompt is None:
+                return f"Skill '{name}' 不存在。可用 Skills: {', '.join(skill_names)}"
+            return prompt
+
         self.register_tool(
-            skill_def.name,
-            skill_def.description,
-            skill_def.parameters,
-            runner.run,
+            "Skill",
+            "加载一个 Skill 的操作指南。"
+            "可用 Skills:\n" + "\n".join(skill_desc_lines),
+            {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "要加载的 Skill 名称",
+                    },
+                },
+                "required": ["name"],
+            },
+            fn,
         )
 
     def register_mcp(self, mcp_client):
