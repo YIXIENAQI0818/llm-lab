@@ -105,8 +105,8 @@ def _handle_command(agent: Agent, cmd: str) -> bool:
         print()
         if skills:
             for i, s in enumerate(skills, 1):
-                print(f"  {i}. {s.name}")
-                print(f"     {s.description}")
+                print(f"  {i}. {s['name']}")
+                print(f"     {s['description']}")
             print(f"\n  共 {len(skills)} 个 Skill")
         else:
             print("  (无 Skills)")

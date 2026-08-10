@@ -2,9 +2,9 @@
 
 仿照 Claude Code:
   - skills/<skill-name>/SKILL.md 定义 Skill（YAML frontmatter + Markdown body）
-  - 启动时扫描目录，提取 name + description + path
-  - Skills 列表注入 system prompt（始终全量可见）
-  - 唯一的 Skill 工具注册到 ToolRegistry，调用时从磁盘读 body 返回
+  - scan_skills() 扫描目录，返回 [{name, description}, ...]（给 core.py 注入 system prompt）
+  - get_skill_tool() 返回 Skill 入口工具的注册数据（给 ToolRegistry 调用）
+  - fn 闭包调用时从磁盘读 body（hot-reload）
 """
 
 import os
@@ -15,71 +15,114 @@ _SKILLS_DIR = os.path.join(
     os.path.dirname(__file__), "..", "..", "..", "skills",
 )
 
-
-class SkillDef:
-    """Skill 元信息，不持有 body（调用时从磁盘读）。"""
-
-    def __init__(self, name: str, description: str, path: str):
-        self.name = name
-        self.description = description
-        self.path = path
+# ----------------------------------------------------------------
+# 内部
+# ----------------------------------------------------------------
 
 
-def scan_skills() -> list[SkillDef]:
-    """扫描 skills/ 目录，返回所有 Skill 的元信息。
+def _parse_skill_md(path: str) -> dict | None:
+    """一次读文件、一次正则，返回 {name, description, body}。
 
-    只读 frontmatter（name + description），不加载 body。
+    SKILL.md 格式:
+        ---
+        name: skill-name
+        description: 触发条件
+        ---
+        # 操作指南
+        ...
     """
-    skills: list[SkillDef] = []
-    if not os.path.isdir(_SKILLS_DIR):
-        return skills
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+    except OSError:
+        return None
 
+    match = re.match(
+        r"^---\s*\n(.*?)\n---\s*\n(.*)", content, re.DOTALL,
+    )
+    if not match:
+        return None
+
+    frontmatter = yaml.safe_load(match.group(1))
+    name = frontmatter.get("name", "")
+    description = frontmatter.get("description", "")
+    body = match.group(2).strip()
+
+    if not name or not description:
+        return None
+
+    return {"name": name, "description": description, "body": body}
+
+
+# ----------------------------------------------------------------
+# 公开
+# ----------------------------------------------------------------
+
+
+def scan_skills() -> list[dict]:
+    """扫描 skills/ 目录，返回 [{name, description}, ...]。
+
+    只解析 frontmatter，不返回 body。给 core.py 注入 system prompt 用。
+    """
+    if not os.path.isdir(_SKILLS_DIR):
+        return []
+
+    skills: list[dict] = []
     for entry in sorted(os.listdir(_SKILLS_DIR)):
         skill_dir = os.path.join(_SKILLS_DIR, entry)
         if not os.path.isdir(skill_dir):
             continue
-
         md_path = os.path.join(skill_dir, "SKILL.md")
         if not os.path.isfile(md_path):
             continue
-
-        # 只解析 frontmatter，不加载整个 body
-        with open(md_path, "r", encoding="utf-8") as f:
-            content = f.read()
-
-        match = re.match(
-            r"^---\s*\n(.*?)\n---", content, re.DOTALL,
-        )
-        if not match:
-            continue
-
-        frontmatter = yaml.safe_load(match.group(1))
-        name = frontmatter.get("name", "")
-        description = frontmatter.get("description", "")
-        if not name or not description:
-            continue
-
-        skills.append(SkillDef(name=name, description=description, path=md_path))
-
+        parsed = _parse_skill_md(md_path)
+        if parsed:
+            skills.append({
+                "name": parsed["name"],
+                "description": parsed["description"],
+            })
     return skills
 
 
-def load_skill_prompt(name: str) -> str | None:
-    """根据 Skill 名从磁盘读 SKILL.md，返回 body（去掉 frontmatter）。
+def get_skill_tool() -> dict | None:
+    """返回 Skill 入口工具的注册数据 {name, description, parameters, fn}。
 
-    每次调用都重新读取，修改 SKILL.md 后立即生效。
+    fn(name) 每次从磁盘读 SKILL.md body（hot-reload）。
+    无 Skill 时返回 None。
     """
-    full_path = os.path.join(_SKILLS_DIR, name, "SKILL.md")
-    if not os.path.isfile(full_path):
+    skills = scan_skills()
+    if not skills:
         return None
 
-    with open(full_path, "r", encoding="utf-8") as f:
-        content = f.read()
+    skill_names = [s["name"] for s in skills]
+    skill_desc_lines = [
+        f"- {s['name']}: {s['description']}" for s in skills
+    ]
 
-    match = re.match(
-        r"^---\s*\n.*?\n---\s*\n(.*)", content, re.DOTALL,
-    )
-    if not match:
-        return content.strip()
+    def fn(name: str) -> str:
+        full_path = os.path.join(_SKILLS_DIR, name, "SKILL.md")
+        if not os.path.isfile(full_path):
+            return f"Skill '{name}' 不存在。可用 Skills: {', '.join(skill_names)}"
+        parsed = _parse_skill_md(full_path)
+        if parsed is None:
+            return f"Skill '{name}' 解析失败。"
+        return parsed["body"]
 
-    return match.group(1).strip()
+    return {
+        "name": "Skill",
+        "description": (
+            "加载一个 Skill 的操作指南。"
+            "可用 Skills:\n" + "\n".join(skill_desc_lines)
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "要加载的 Skill 名称",
+                },
+            },
+            "required": ["name"],
+        },
+        "fn": fn,
+    }

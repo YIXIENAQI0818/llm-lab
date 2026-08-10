@@ -57,7 +57,6 @@ class Agent:
         self.ltm = LongTermMemory(self.store, llm_client=self.llm)
         self.pm = PlanManager()
         self.kb = KnowledgeBase(self.store, llm_client=self.llm)
-        self.kb.build_kb_index()
 
         # ToolRegistry — 自己负责加载三类工具
         self.tr = ToolRegistry(
@@ -71,7 +70,7 @@ class Agent:
         full_prompt = system_prompt
         if self._skills:
             skill_lines = "\n".join(
-                f"- {s.name}: {s.description}" for s in self._skills
+                f"- {s['name']}: {s['description']}" for s in self._skills
             )
             full_prompt += f"\n\n## 可用 Skills\n{skill_lines}"
         self.cm = ConversationMemory(self.llm, system_prompt=full_prompt)

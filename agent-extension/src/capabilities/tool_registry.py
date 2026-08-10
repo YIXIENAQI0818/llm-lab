@@ -1,9 +1,9 @@
 """工具中心 — Agent 唯一对接的工具组件。
 
-三类工具统一注册:
-  register_tool()   — 本地工具（纯函数 / LTM/KB/PM 方法）
-  register_skill()  — Skill（内部 LLM 循环,包成 fn）
-  register_mcp()    — MCP（远程 Server,批量注册）
+三类工具统一入口 register_tool():
+  get_local_tools()  → for t in ...: register_tool(**t)
+  get_skill_tool()   → if t: register_tool(**t)
+  get_mcp_clients()  → for mcp in ...: register_mcp(mcp)
 
 对外:
   get_definitions() — 返回给 LLM 的工具列表（> top_k 时语义搜索）
@@ -13,7 +13,7 @@
 import json
 from ..agent_framework.chroma_store import ChromaDBStore
 from .tool_infra.local_tools import get_local_tools
-from .tool_infra.skill import scan_skills, load_skill_prompt
+from .tool_infra.skill import get_skill_tool
 from .tool_infra.mcp_client import get_mcp_clients
 
 
@@ -32,10 +32,10 @@ class ToolRegistry:
         for t in get_local_tools(components or []):
             self.register_tool(**t)
 
-        # 2. Skills（扫描 skills/ 目录，注册单个 Skill 工具）
-        skills = scan_skills()
-        if skills:
-            self._register_skill_tool(skills)
+        # 2. Skills
+        skill_tool = get_skill_tool()
+        if skill_tool:
+            self.register_skill(skill_tool)
 
         # 3. MCP
         for mcp in get_mcp_clients():
@@ -62,39 +62,9 @@ class ToolRegistry:
             "fn": fn,
         }
 
-    def _register_skill_tool(self, skills):
-        """注册唯一的 Skill 入口工具。
-
-        description 拼接所有 Skill 的 name + description（给 LLM 做语义匹配），
-        fn 接收 name 参数，调 load_skill_prompt 从磁盘读 body。
-        """
-        skill_desc_lines = [
-            f"- {s.name}: {s.description}" for s in skills
-        ]
-        skill_names = [s.name for s in skills]
-
-        def fn(name: str) -> str:
-            prompt = load_skill_prompt(name)
-            if prompt is None:
-                return f"Skill '{name}' 不存在。可用 Skills: {', '.join(skill_names)}"
-            return prompt
-
-        self.register_tool(
-            "Skill",
-            "加载一个 Skill 的操作指南。"
-            "可用 Skills:\n" + "\n".join(skill_desc_lines),
-            {
-                "type": "object",
-                "properties": {
-                    "name": {
-                        "type": "string",
-                        "description": "要加载的 Skill 名称",
-                    },
-                },
-                "required": ["name"],
-            },
-            fn,
-        )
+    def register_skill(self, skill_tool: dict):
+        """注册 Skill 入口工具。"""
+        self.register_tool(**skill_tool)
 
     def register_mcp(self, mcp_client):
         """注册 MCP — discover 工具 → 逐一 register_tool。"""

@@ -13,6 +13,7 @@ class KnowledgeBase:
         self._es = es
         self._tc = TokenChunker()
         self._rt = Retriever(es, llm_client, reranker=Reranker())
+        self.build_kb_index()
 
     # ================================================================
     # 索引
