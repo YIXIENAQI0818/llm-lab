@@ -38,10 +38,11 @@ class ConversationMemory:
         self._auto_trim()
 
     def add_assistant(self, message):
-        """添加完整的 assistant message（可能含 tool_calls）。"""
-        self._messages.append({
+        """添加完整的 assistant message（可能含 tool_calls + reasoning_content）。"""
+        entry = {
             "role": "assistant",
             "content": message.content,
+            "reasoning_content": getattr(message, 'reasoning_content', None) or None,
             "tool_calls": [
                 {
                     "id": tc.id,
@@ -53,7 +54,8 @@ class ConversationMemory:
                 }
                 for tc in (message.tool_calls or [])
             ] if message.tool_calls else None,
-        })
+        }
+        self._messages.append(entry)
         self._auto_trim()
 
     def add_tool_result(self, call_id: str, result: str):
@@ -109,6 +111,8 @@ class ConversationMemory:
             total += self._MSG_OVERHEAD
             content = m.get("content") or ""
             total += len(self._enc.encode(content))
+            reasoning = m.get("reasoning_content") or ""
+            total += len(self._enc.encode(reasoning))
             if m.get("tool_calls"):
                 for tc in m["tool_calls"]:
                     fn = tc.get("function", {})
