@@ -1,6 +1,6 @@
 # llm-lab 整体技术报告
 
-> 报告日期：2026-07-12 | 作者：程宣赫
+> 报告日期：2026-08-30 | 作者：程宣赫
 
 ---
 
@@ -11,19 +11,24 @@
 3. [第二层：RAG 工作层](#3-第二层rag-工作层)
 4. [第三层：Agent 应用层](#4-第三层agent-应用层)
 5. [第四层：多 Agent 协作层](#5-第四层多-agent-协作层)
-6. [架构演进全景图](#6-架构演进全景图)
-7. [关键设计决策汇总](#7-关键设计决策汇总)
+6. [第五层：Agent 扩展层](#6-第五层agent-扩展层-agent-extension)
+7. [架构演进全景图](#7-架构演进全景图)
+8. [关键设计决策汇总](#8-关键设计决策汇总)
 
 ---
 
 ## 1. 项目概述
 
-`llm-lab` 是一个大模型（LLM）学习实验项目，按**四层递进架构**组织，从底层 API 调用逐步构建到上层多 Agent 协作系统。整个项目基于 **DeepSeek API**（OpenAI 兼容协议），使用纯 Python 手写实现，不依赖 LangChain、CrewAI、AutoGen 等第三方 Agent 框架。
+`llm-lab` 是一个大模型（LLM）学习实验项目，按**五层递进架构**组织，从底层 API 调用逐步构建到上层 Agent 扩展系统。整个项目基于 **DeepSeek API**（OpenAI 兼容协议），使用纯 Python 手写实现，不依赖 LangChain、CrewAI、AutoGen 等第三方 Agent 框架。
 
-### 1.1 四层架构总览
+### 1.1 五层架构总览
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
+│                    第五层：Agent 扩展层                            │
+│   单 Agent + Skill 提示词注入 + MCP 外部工具，ToolRegistry 三层统一 │
+│   agent-extension/ 子项目 (✅ 完成)                               │
+├──────────────────────────────────────────────────────────────────┤
 │                    第四层：多 Agent 协作层                         │
 │   Orchestrator + Workers 模式，按需创建、并行执行、上下文隔离       │
 │   multi-agent/ 子项目 (✅ 5/5 回合完成)                           │
@@ -53,6 +58,8 @@
 | 分词 | jieba (中文) + tiktoken (token 计数) | `cl100k_base` 编码 |
 | BM25 | rank-bm25 | 稀疏检索 |
 | 并发 | `concurrent.futures.ThreadPoolExecutor` | Worker 并行执行 |
+| Skill | SKILL.md（YAML frontmatter + Markdown） | 提示词注入，仿 Claude Code |
+| MCP | 纯标准库 JSON-RPC 2.0 over stdio | 子进程通信，无第三方依赖 |
 
 ---
 
@@ -1129,15 +1136,158 @@ Orch 汇总:
 
 ---
 
-## 6. 架构演进全景图
+## 6. 第五层：Agent 扩展层 (agent-extension)
 
-### 6.1 六个子项目的接力
+### 6.1 定位
+
+前四层完成了从 API 调用到多 Agent 协作的完整演进。agent-extension 在此基础上回答一个新问题：**Agent 的能力如何在不改核心代码的前提下扩展？**
+
+它从 multi-agent 中提取成熟的基础设施（LLMClient、ChromaDBStore、LTM、PM、KB、rag_infra），重构为一个**单 Agent 优先**的框架，并引入两种业界主流的扩展机制：
+
+- **Skill**：仿 Claude Code 的提示词注入模式，把"操作指南"写成 `SKILL.md` 文件，LLM 按需加载执行
+- **MCP**（Model Context Protocol）：通过标准协议接入外部工具 Server，用纯 Python 标准库实现
+
+三者（本地工具 / Skill / MCP）统一收敛到一个 `ToolRegistry`，Agent 只对接它，不关心工具来自哪里。
+
+### 6.2 总体架构
 
 ```
-api-basics ──→ rag-basics ──→ agent-basics ──→ agent-advanced ──→ rag-agent ──→ multi-agent
- (API 调用)     (RAG 基础)    (Function Call)  (Agent 框架)      (RAG 增强)     (多 Agent)
+Agent ──→ ToolRegistry（唯一对接点）
+              │
+              ├── 本地工具: 纯函数 + LTM/KB/PM 绑定方法   (register_tool)
+              ├── Skill:   SKILL.md 提示词注入（独立通道）  (register_skill)
+              └── MCP:     远程 MCP Server 工具（子进程）   (register_mcp)
+```
 
-第一层          第二层                          第三层                          第四层
+**核心设计：三类工具对称注册**。无论工具是本地函数、Skill 还是远程 MCP，最终都变成 OpenAI Function Calling 格式的一条定义，进入同一个 `_tools` 字典，统一走 `get_definitions()`（语义发现）和 `execute()`（执行）。Agent 侧代码零改动。
+
+### 6.3 ToolRegistry — 三层统一注册
+
+```python
+class ToolRegistry:
+    def __init__(self, es, components, llm_client, collection="tools"):
+        self._tools = {}
+        # ① 本地工具
+        for t in get_local_tools(components or []):
+            self.register_tool(**t)
+        # ② Skill（只有一个入口工具）
+        skill_tool = get_skill_tool()
+        if skill_tool:
+            self.register_skill(skill_tool)
+        # ③ MCP（每个 Server discover 后逐一注册）
+        for mcp in get_mcp_clients():
+            self.register_mcp(mcp)
+        self.build_tool_index()
+```
+
+- `register_tool(name, description, parameters, fn)` — 本地工具
+- `register_skill(skill_tool)` — 本质是 `register_tool(**skill_tool)`，复用同一套注册
+- `register_mcp(mcp)` — `discover()` 发现远程工具，`_make_caller()` 包装成 callable 后 `register_tool`
+
+**关键点**：
+
+- MCP 工具用 namespace 前缀避免冲突（`fs__`、`fetch__`、`git__`），注册进 ToolRegistry 后与本地工具完全同构，`execute()` 不区分类型，统一 `str(fn(**args))`
+- 所有工具的 `description` 统一写入 ChromaDB（来源无差别），工具数 > `top_k`（5）时语义搜索
+- `_CRITICAL_TOOLS`（`recall_memory`、`search_docs`、`fetch__fetch`、`Skill` 等）始终包含，不因语义不匹配被过滤
+
+### 6.4 Skill — 提示词注入模式
+
+仿 Claude Code 的 Skill 机制，但实现极简：
+
+```
+skills/
+└── deep-research/
+    └── SKILL.md          # YAML frontmatter + Markdown body
+```
+
+SKILL.md 结构：
+
+```markdown
+---
+name: deep-research
+description: 当用户要求"深度调研"、"深入研究某个主题"时使用...
+---
+
+# 深度调研
+## 执行步骤
+1. 知识库搜索：使用 search_docs ...
+2. 网络搜索：使用 fetch__fetch ...
+3. 对比分析、撰写报告 ...
+```
+
+**两段式加载**：
+
+1. **启动时** `scan_skills()` 扫描 `skills/` 目录，只解析 frontmatter（name + description），注入 system prompt 的"## 可用 Skills"段。LLM 由此知道"有哪些 Skill、何时该用"。
+2. **运行时** ToolRegistry 只注册一个 `Skill` 工具（不是每 Skill 一个）。LLM 调 `Skill(name="deep-research")` → `fn` 从磁盘读 body 返回 → LLM 读指令自己执行。
+
+**设计要点**：
+
+- **hot-reload**：`fn` 每次从磁盘读 SKILL.md，修改后下次调用立即生效，无需重启
+- **为什么不是每 Skill 一个工具**：Skill 数量可能很多，且 body 很长，全塞工具列表会撑爆 prompt。一个入口 + 按需加载，body 不进工具定义
+- **提示词注入 vs 子 Agent**：早期方案是把 Skill 作为子 Agent 调用，后改为提示词注入——Skill 本质是"一段可复用的指令"，注入后 LLM 直接执行更简单，省去子 Agent 的上下文隔离开销
+
+### 6.5 MCP — 纯标准库 JSON-RPC 客户端
+
+`MCPClient` 不依赖任何第三方 MCP 包，用 `subprocess + json + threading` 手写 MCP over stdio：
+
+```
+启动流程:
+  1. subprocess.Popen 启动 Server
+  2. initialize 请求握手（协商协议版本和能力）
+  3. initialized 通知（告知 Server 客户端已就绪）
+  4. tools/list 请求发现工具（批量注册到 ToolRegistry）
+  5. 对话中收到工具调用 → tools/call 请求 → 返回结果
+```
+
+```python
+MCP_SERVERS = [
+    {"command": ["npx", "-y", "@modelcontextprotocol/server-filesystem", "..."],
+     "namespace": "fs__"},
+    {"command": ["python", "-m", "mcp_server_fetch"], "namespace": "fetch__"},
+    {"command": ["python", "-m", "mcp_server_git"], "namespace": "git__"},
+]
+```
+
+**设计要点**：
+
+- 每行一条 JSON-RPC 2.0 消息，`\n` 分隔；请求带 id，响应回传相同 id
+- 串行调用 + 全局锁（`threading.Lock`），避免并发写 stdin 交错
+- 错误处理：Server 启动失败只打印警告并跳过，不影响其他 Server 和本地工具
+- MCP 返回格式 `{content: [{type: "text", text: ...}]}` 规范化为字符串，非标准格式直接序列化
+
+### 6.6 与 multi-agent 的架构差异
+
+| 维度 | multi-agent | agent-extension |
+|------|-------------|-----------------|
+| 核心模式 | Orchestrator + Worker 多 Agent | 单 Agent 优先 |
+| 工具来源 | 本地（builtin + LTM/PM/KB） | 本地 + Skill + MCP 三层 |
+| 能力扩展 | 改代码（加 role、加工具） | 写 SKILL.md / 配 MCP Server，不改核心 |
+| 工具定义 | 分散在各组件 `get_tools()` | 集中在 `tool_infra/local_tools.py` + 三层注册 |
+| CLI | 两个入口（cli / cli_orch） | 一个入口（cli） |
+
+**核心洞察**：multi-agent 的复杂在于"多个 Agent 怎么协作"，agent-extension 则把焦点收回到"单个 Agent 的能力边界怎么扩展"。Worker 协作是 Agent 内部决策的延伸，而 Skill/MCP 是把外部世界的能力（知识、工具）拉进 Agent。
+
+### 6.7 CLI — 单入口 REPL
+
+```python
+# python -m src.cli
+Agent Extension — 单 Agent + Skill + MCP 扩展框架
+命令: /reset /reindex /stats /tools /skills /help /exit
+```
+
+`/reindex` 一次性重建 KB + LTM + Tools 三个索引，`/skills` 列出可用 Skill，`/tools` 列出全部注册工具（本地 + Skill + MCP 混排）。退出时 `tr.close()` 清理所有 MCP 子进程。
+
+---
+
+## 7. 架构演进全景图
+
+### 7.1 七个子项目的接力
+
+```
+api-basics ──→ rag-basics ──→ agent-basics ──→ agent-advanced ──→ rag-agent ──→ multi-agent ──→ agent-extension
+ (API 调用)     (RAG 基础)    (Function Call)  (Agent 框架)      (RAG 增强)     (多 Agent)      (扩展框架)
+
+第一层          第二层                          第三层                          第四层          第五层
 ```
 
 每个子项目继承前一个的产出，形成能力累进：
@@ -1150,8 +1300,9 @@ api-basics ──→ rag-basics ──→ agent-basics ──→ agent-advanced 
 | agent-advanced | agent-basics | 记忆系统、规划、反思、工具发现 | 完整单 Agent 框架 |
 | rag-agent | agent-advanced | ChromaDB、混合检索、精排 | Agent RAG 增强 |
 | multi-agent | rag-agent | Orchestrator+Worker、并行、角色化 | 多 Agent 协作 |
+| agent-extension | multi-agent | Skill 提示词注入、MCP 客户端、三层统一注册 | Agent 扩展框架 |
 
-### 6.2 关键架构转折点
+### 7.2 关键架构转折点
 
 1. **api-basics → src/ 架构**（04 回合）：共享代码抽取，结束"每个 notebook 自包含"的阶段
 2. **agent-advanced → System prompt 静态化**（07 回合）：所有动态内容走工具或 messages，不再重建 system prompt
@@ -1160,8 +1311,10 @@ api-basics ──→ rag-basics ──→ agent-basics ──→ agent-advanced 
 5. **multi-agent → 工具体系重构**（01 回合）：从集中创建闭包绑定 → 组件自供工具
 6. **multi-agent → Worker 按需创建**（02 回合）：从预创建常驻 → 用完 GC
 7. **multi-agent → Orch 全能副手**（03 回合）：从纯分发者 → 自己也能干活
+8. **agent-extension → Skill 提示词注入**：从子 Agent 方案回退为提示词注入（Skill 本质是可复用指令，注入后直接执行更简单）
+9. **agent-extension → MCP 纯标准库**：不引入第三方 MCP 包，手写 JSON-RPC 2.0 over stdio
 
-### 6.3 代码量演变
+### 7.3 代码量演变
 
 | 子项目 | 框架文件数 | 核心能力 |
 |------|-----------|---------|
@@ -1171,24 +1324,26 @@ api-basics ──→ rag-basics ──→ agent-basics ──→ agent-advanced 
 | agent-advanced | 6 | core + llm + memory + tools + embedding_store + LTM + PM |
 | rag-agent | 10+ | + chroma_store + kb + rag_infra/ (3) + tool_registry |
 | multi-agent | 14+ | + orchestration/ (2) + cli_orch |
+| agent-extension | 15+ | + tool_infra/ (3: local_tools + skill + mcp_client) |
 
 ---
 
-## 7. 关键设计决策汇总
+## 8. 关键设计决策汇总
 
-### 7.1 架构原则
+### 8.1 架构原则
 
 | 原则 | 体现 |
 |------|------|
-| **渐进式构建** | 6 个子项目接力，每回合只加一个核心能力 |
+| **渐进式构建** | 7 个子项目接力，每回合只加一个核心能力 |
 | **手写核心** | 不依赖 LangChain/CrewAI/AutoGen，所有底层机制自己实现 |
 | **组合优于继承** | KB 组合 Chunker+Retriever+Reranker；Agent 组合 LTM+PM+KB+ToolRegistry |
 | **组件自治** | 各能力模块自供工具（`get_tools()`），Agent 只做收集和路由 |
 | **单一职责** | 每个文件/类做一件事：llm.py 只管 API，memory.py 只管对话历史，plan_manager.py 只管计划 |
 | **配置硬编码** | 底层参数（模型名、base_url、chunk 大小）不暴露为构造函数参数 |
 | **隔离先行** | Worker 按需创建、独立上下文、用完 GC，互不干扰 |
+| **扩展不改核心** | 加 Skill = 写 SKILL.md，加 MCP = 配 Server，不改 Agent 核心代码 |
 
-### 7.2 工程实践
+### 8.2 工程实践
 
 | 实践 | 说明 |
 |------|------|
@@ -1200,18 +1355,18 @@ api-basics ──→ rag-basics ──→ agent-basics ──→ agent-advanced 
 | **时间衰减** | 30 天半衰期，新记忆优于旧记忆 |
 | **Unicode 清理** | `_SURROGATE_RE` 移除代理字符，防止 WSL 中文输入导致的 print 崩溃 |
 
-### 7.3 模型选择逻辑
+### 8.3 模型选择逻辑
 
 | 场景 | 选型 | 理由 |
 |------|------|------|
-| LLM | DeepSeek (deepseek-chat) | OpenAI 兼容 + 中文能力强 + 成本低 |
+| LLM | DeepSeek (deepseek-v4-flash) | OpenAI 兼容 + 中文能力强 + 成本低（08-14 由 deepseek-chat 迁移，支持 thinking 模式） |
 | Embedding | BGE-small-zh-v1.5 | 本地运行 + 中文优化 + 轻量 |
 | Cross-Encoder | bge-reranker-v2-m3 | 中英混合 + 精度高 |
 | 向量 DB | ChromaDB | 零配置 + 持久化 + 嵌入式 |
 | Token 计数 | tiktoken cl100k_base | 精确 + 中英通用 |
 | 中文分词 | jieba | 经典 + 成熟 |
 
-### 7.4 命名体系
+### 8.4 命名体系
 
 | 类型 | 约定 | 示例 |
 |------|------|------|
@@ -1259,9 +1414,44 @@ api-basics ──→ rag-basics ──→ agent-basics ──→ agent-advanced 
 | `orchestrator.py` | `Orchestrator` | 多 Agent 编排主控 + delegate_task |
 | `roles.py` | (ROLES + 工厂) | Worker 角色定义 + create_worker() |
 
+### agent-extension/src/agent_framework/ (框架核心)
+
+| 文件 | 类 | 职责 |
+|------|-----|------|
+| `llm.py` | `LLMClient` | DeepSeek API 调用封装（v4-flash + thinking） |
+| `memory.py` | `ConversationMemory` | 对话历史 + token 计数 + 自动摘要 |
+| `chroma_store.py` | `ChromaDBStore`, `BGEEmbedding` | ChromaDB 向量存储 |
+| `core.py` | `Agent` | Agent 主循环 + 工具执行 |
+
+### agent-extension/src/capabilities/ (能力层)
+
+| 文件 | 类 | 职责 |
+|------|-----|------|
+| `long_term_memory.py` | `LongTermMemory` | 长期记忆：JSON + ChromaDB + LLM 合并 |
+| `plan_manager.py` | `PlanManager` | 计划管理：Plan-as-Tool + 文件持久化 |
+| `knowledge_base.py` | `KnowledgeBase` | 知识库：RAG 管线组合 |
+| `tool_registry.py` | `ToolRegistry` | 三类工具统一注册、索引、执行 |
+
+### agent-extension/src/capabilities/tool_infra/ (工具底层)
+
+| 文件 | 类 | 职责 |
+|------|-----|------|
+| `local_tools.py` | (函数) | 本地工具集中定义（纯函数 + 组件绑定方法） |
+| `skill.py` | (函数) | Skill 扫描 + SKILL.md 解析 + 入口工具 |
+| `mcp_client.py` | `MCPClient` | MCP over stdio 客户端（subprocess + JSON-RPC） |
+
+### agent-extension/src/capabilities/rag_infra/ (RAG 管线)
+
+| 文件 | 类 | 职责 |
+|------|-----|------|
+| `token_chunker.py` | `TokenChunker` | tiktoken 文档分块 |
+| `retriever.py` | `Retriever` | Dense + BM25 混合检索 + RRF + Query Rewriting |
+| `reranker.py` | `Reranker` | Cross-Encoder 精排 |
+
 ### CLI 入口
 
 | 文件 | 模式 | 说明 |
 |------|------|------|
 | `multi-agent/cli.py` | 单 Agent | 12 工具，REPL 交互 |
 | `multi-agent/cli_orch.py` | Orchestrator | 13 工具 + Worker 调派，REPL 交互 |
+| `agent-extension/src/cli.py` | 单 Agent + Skill + MCP | REPL 交互，`python -m src.cli` |

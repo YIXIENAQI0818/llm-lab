@@ -1,6 +1,6 @@
 # llm-lab
 
-大模型（LLM）相关学习的实验项目集合。每个子项目围绕一个特定的学习主题或验证想法展开，从 API 调用基础到多 Agent 协作，逐步深入。
+大模型（LLM）相关学习的实验项目集合。每个子项目围绕一个特定的学习主题或验证想法展开，从 API 调用基础到 Agent 扩展框架，逐步深入。
 
 ## 子项目
 
@@ -12,7 +12,7 @@
 | [agent-advanced](agent-advanced/) | Agent 能力深入（记忆、计划、LTM 合并） | ✅ |
 | [rag-agent](rag-agent/) | Agent + RAG 融合（ChromaDB、混合检索、Cross-Encoder 精排） | ✅ |
 | [multi-agent](multi-agent/) | 多 Agent 协作（Orchestrator + Worker、并行委派） | ✅ |
-| [agent-extension](agent-extension/) | Agent 扩展框架（单 Agent + Skill + MCP + 统一工具体系） | 🚧 |
+| [agent-extension](agent-extension/) | Agent 扩展框架（单 Agent + Skill + MCP + 统一工具体系） | ✅ |
 
 ## 技术栈
 
