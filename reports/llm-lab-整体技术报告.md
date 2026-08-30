@@ -21,6 +21,8 @@
 
 `llm-lab` 是一个大模型（LLM）学习实验项目，按**五层递进架构**组织，从底层 API 调用逐步构建到上层 Agent 扩展系统。整个项目基于 **DeepSeek API**（OpenAI 兼容协议），使用纯 Python 手写实现，不依赖 LangChain、CrewAI、AutoGen 等第三方 Agent 框架。
 
+之所以层层递进而非一次性搭一个「完整系统」，是因为 LLM 应用里每一层的能力都建立在下一层之上：不理解 API 的 messages 结构，就理解不了 Function Calling；不理解向量检索，就理解不了 RAG；不理解单 Agent 主循环，就理解不了多 Agent 协作。逐层构建让每个阶段只聚焦一个新问题，同时复用前一层已经验证过的基础设施。全程手写而非直接引入 LangChain 这类框架，则是为了看清每一层「黑箱」内部到底发生了什么——框架替你省掉的那些细节，恰恰是这个项目想学的东西。
+
 ### 1.1 五层架构总览
 
 ```
@@ -51,13 +53,13 @@
 
 | 组件 | 技术选型 | 说明 |
 |------|---------|------|
-| LLM | DeepSeek API (`deepseek-chat`) | OpenAI 兼容协议，复用 `openai` SDK |
+| LLM | DeepSeek API (`deepseek-v4-flash`) | OpenAI 兼容协议，复用 `openai` SDK |
 | Embedding | `BAAI/bge-small-zh-v1.5` | sentence-transformers，512 维向量 |
 | Cross-Encoder | `BAAI/bge-reranker-v2-m3` | 精排模型 |
 | 向量数据库 | ChromaDB (PersistentClient) | 持久化到 `chroma_data/` |
 | 分词 | jieba (中文) + tiktoken (token 计数) | `cl100k_base` 编码 |
 | BM25 | rank-bm25 | 稀疏检索 |
-| 并发 | `concurrent.futures.ThreadPoolExecutor` | Worker 并行执行 |
+| 并发 | `concurrent.futures.ThreadPoolExecutor` | Worker 并行执行（multi-agent，第五层已移除） |
 | Skill | SKILL.md（YAML frontmatter + Markdown） | 提示词注入，仿 Claude Code |
 | MCP | 纯标准库 JSON-RPC 2.0 over stdio | 子进程通信，无第三方依赖 |
 
@@ -171,7 +173,13 @@ RAG（Retrieval-Augmented Generation）让 LLM 能基于外部文档回答问题
 
 ### 3.3 rag-agent 的 RAG 管线（rag_infra/）
 
-这是 RAG 能力从"理解概念"到"工程可用"的跨越。三个组件（TokenChunker → Retriever → Reranker）形成完整管线。
+这是 RAG 能力从"理解概念"到"工程可用"的跨越。管线刻意设计成三段（TokenChunker → Retriever → Reranker），每一段在检索质量漏斗中解决一层问题：
+
+- **分块**：决定「检索的基本单位」。文档太长，既塞不进上下文窗口，也会稀释语义密度；切成合适粒度的 chunk，才能让每个检索结果聚焦一个语义主题。
+- **混合检索**：解决「单一检索方式的盲区」。语义检索（Dense）和关键词检索（BM25）各有失明区，两路并行召回 + RRF 融合，才能在召回阶段尽量不漏。
+- **精排**：解决「召回多但不够准」。粗排为保召回把候选放宽到 Top-20，精度交给 Cross-Encoder 收尾。
+
+三段对应信息检索经典的「**先召回、后精排**」（retrieve-then-rerank）两阶段范式：用便宜的 Bi-Encoder 快速从海量文档里捞出一批候选，再用昂贵的 Cross-Encoder 对少量候选做精细排序。粗排追求「宁可多、不可漏」，精排追求「宁缺毋滥」，两级各司其职，才能在检索质量与计算开销之间取得平衡——只用 Bi-Encoder 精度不够，对全库直接上 Cross-Encoder 又因为每对 (query, doc) 都要重过一遍 Transformer 而成本不可接受。
 
 #### 3.3.1 TokenChunker — 文档分块
 
@@ -184,7 +192,7 @@ _MODEL = "cl100k_base"
 **设计要点**：
 
 - **为什么用 Token 数而非字符数**：LLM 的上下文窗口按 token 计费，用 token 分块可以精确控制送入 LLM 的内容量。中英文的字符-token 比例差异很大（英文 ~4 chars/token，中文 ~1.5 chars/token），用字符数无法精准控制。
-- **为什么用 `cl100k_base`**：GPT-4/GPT-3.5 使用的编码，对中英文都能正确计数。虽然本项目用 DeepSeek，但 token 计数的一致性仍然重要。
+- **为什么用 `cl100k_base`**：先明确 token 计数在这里的任务——不是给 API 账单做精确核算，而是在本地判断「对话历史是否逼近上下文上限、何时触发摘要裁剪」。这个任务是相对的：差几个百分点没关系（摘要裁剪本身留了 30% 缓冲吸收误差，见 4.4.3）。既然要的是近似，就选最省事、覆盖最全的通用编码：`cl100k_base` 是 GPT-4 的编码，10 万词表、覆盖中文在内的多语言，BPE 粒度与 DeepSeek 这类 GPT 系模型接近，对中英文混合文本的计数误差在可接受范围。反观 DeepSeek，通过 OpenAI 兼容协议调用时响应里并不回传 token 用量，要为它做精确计数就得额外引入官方 tokenizer——对「近似计数」这个目标来说纯属浪费。
 - **滑动窗口 + Overlap**：`step = CHUNK_TOKENS - OVERLAP_TOKENS = 192`，每次滑动 192 token，保留 64 token 重叠。这样做的目的是防止关键信息恰好被切在 chunk 边界上导致丢失。
 - **元数据丰富**：每个 chunk 带有 `source`（源文件名）、`chunk_index`（序号）、`token_start`/`token_end`，方便检索结果溯源。
 
@@ -233,10 +241,25 @@ Chunk 4: [768..1023]
 - 取粗排 Top-20
 
 **BM25 检索（关键词匹配）**：
-- 使用 `jieba` 中文分词 + `rank-bm25` 库
-- BM25 是 TF-IDF 的改进版，考虑了词频饱和度和文档长度归一化
-- 优势：精确匹配专有名词、术语、数字
-- 取粗排 Top-20
+
+实现上先用 `jieba` 中文分词（中文没有空格，必须先切词），再用 `rank-bm25` 库计算。BM25（Best Matching 25）是 TF-IDF 的改进版，稀疏检索的代表。它的打分公式是：
+
+```
+score(D, Q) = Σ_{t∈Q} IDF(t) · TF_norm(t, D)
+
+IDF(t)       = ln(1 + (N - n(t) + 0.5) / (n(t) + 0.5))                       # 词的稀有度
+TF_norm(t,D) = f(t,D)·(k1+1) / (f(t,D) + k1·(1 - b + b·|D|/avgdl))           # 词频 + 长度归一
+```
+
+相比 TF-IDF，它改进了三点，对应三个直观直觉：
+
+- **IDF 逆文档频率——「越稀有的词越有区分度」**：一个词在越多文档里出现，权重越低。"的、是、一个"这类词几乎篇篇都有，提供不了区分信息；"Transformer"这种只出现在少数文档里的词，一旦命中就是强信号。注意 IDF 只跟「这个词在多少篇文档出现过」有关，与具体某篇文档无关。
+- **词频饱和——「出现 10 次不该比 2 次强 5 倍」**：TF-IDF 里词频线性增长，堆砌关键词的文档会虚高。BM25 用饱和函数 `f·(k1+1)/(f+k1)`，词频越大边际贡献越小，最终趋近 `k1+1` 的上限——词出现 2 次基本就说明文档相关了，出现 20 次不会让它更相关多少。
+- **文档长度归一化——「长文档不能天然占便宜」**：长文档词多、词频天然更高，会在 TF 上占优。BM25 用 `|D|/avgdl`（文档长度 / 平均长度）惩罚长文档：文档比平均长，分母变大、分数被压低。`b` 控制惩罚强度（0 = 不惩罚，1 = 完全按长度比例）。
+
+`k1`、`b` 是两个经验常数（默认 1.5、0.75），**无需训练**。这正是 BM25 的价值：简单、稳健、零成本，是关键词匹配的默认基线。
+
+它捕捉的是「词面匹配」——专有名词、术语、数字、代码符号，这些恰恰是语义向量（Dense）容易失明的地方，所以 BM25 和 Dense 天然互补。取粗排 Top-20。
 
 **RRF（Reciprocal Rank Fusion）融合**：
 ```python
@@ -270,6 +293,7 @@ rrf_score += 1.0 / (K + rank + 1)
 | 用途 | 粗排（海量文档 → Top-20） | 精排（Top-20 → Top-5） |
 
 - **为什么需要精排**：Bi-Encoder 为了速度牺牲了 query-doc 交互。Cross-Encoder 将 query 和 doc 拼接后通过完整的 Transformer 注意力机制，能捕捉到更精细的语义匹配关系。
+- **为什么选 `bge-reranker-v2-m3`**：精排模型与召回阶段的 BGE embedding 同属 BAAI 的 BGE 系列，语义空间的训练方式一致，配合使用时「召回判相关、精排又判不相关」的错位更少。m3 版本本身是多语言（multi-lingual）、多粒度（multi-granularity）模型，对中文及中英混合查询的排序质量有保证，与项目的中文语料场景匹配。
 - **单例模式**：Cross-Encoder 模型较大（~2GB），在模块级别创建单例 `_singleton_reranker`，多个 Agent 共享一份模型，避免重复加载和 CUDA OOM。
 - **`local_files_only=True`**：避免运行时因网络波动导致模型加载失败。
 
@@ -300,7 +324,7 @@ Agent 应用层是项目的核心，构建了一个完整的**工业级单 Agent
 - **工具系统**（注册、索引、按需发现、执行）
 - **自我反思**（Prompt 驱动，不加新机制）
 
-这一层经历了三个子项目的演进：agent-basics → agent-advanced → rag-agent，最终在 multi-agent 中达到最完整形态。
+这一层经历了 agent-basics → agent-advanced → rag-agent → multi-agent 的演进，单 Agent 框架的最终形态在 agent-extension（第五层）中沉淀下来。本节引用的代码以 agent-extension 为最新基准。
 
 ### 4.2 Agent 主循环 — `core.py`
 
@@ -308,40 +332,50 @@ Agent 应用层是项目的核心，构建了一个完整的**工业级单 Agent
 
 ```python
 class Agent:
-    def __init__(self, system_prompt, tools, tool_collection, extra_tools):
-        self.llm = LLMClient()              # ① LLM 客户端
-        self.es = ChromaDBStore()            # ② 向量存储
-        self.ltm = LongTermMemory(es, llm)   # ③ 长期记忆
-        self.pm = PlanManager()              # ④ 计划管理
-        self.kb = KnowledgeBase(es, llm)     # ⑤ 知识库
-        self.kb.build_kb_index()             # ⑥ 构建知识库索引
+    def __init__(self, system_prompt: str = DEFAULT_SYSTEM_PROMPT,
+                 max_rounds: int = 50):
+        self._max_rounds = max_rounds
 
-        # ⑦ 收集所有工具
-        all_tools = builtin_tools()           # 纯工具（3个）
-        all_tools.extend(self.ltm.get_tools())  # 记忆工具（2个）
-        all_tools.extend(self.pm.get_tools())   # 计划工具（6个）
-        all_tools.extend(self.kb.get_tools())   # 知识库工具（1个）
-        if extra_tools:
-            all_tools.extend(extra_tools)      # 外部注入（如 delegate_task）
+        # 核心依赖
+        self.llm = LLMClient()                          # ① LLM 客户端
+        self.store = ChromaDBStore()                    # ② 向量存储
 
-        # ⑧ 工具过滤 + 注册
-        if tools is not None:
-            all_tools = [t for t in all_tools if t["name"] in keep]
-        self.tr = ToolRegistry(es, all_tools, collection=tool_collection)
-        self.tr.build_tool_index()            # ⑨ 构建工具索引
+        # 组件
+        self.ltm = LongTermMemory(self.store, llm_client=self.llm)   # ③ 长期记忆
+        self.pm = PlanManager()                         # ④ 计划管理
+        self.kb = KnowledgeBase(self.store, llm_client=self.llm)     # ⑤ 知识库
 
-        # ⑩ 短期记忆（最后初始化，因为需要 LLM 引用）
-        self.cm = ConversationMemory(llm, system_prompt=system_prompt)
+        # ToolRegistry — 自己负责加载三类工具（本地/Skill/MCP）
+        self.tr = ToolRegistry(                         # ⑥ 工具中心
+            self.store,
+            components=[self.ltm, self.pm, self.kb],
+            llm_client=self.llm,
+        )
+
+        # 对话记忆（Skills 列表注入 system prompt）
+        self._skills = scan_skills()                    # ⑦ 扫描 Skill
+        full_prompt = system_prompt
+        if self._skills:
+            skill_lines = "\n".join(
+                f"- {s['name']}: {s['description']}" for s in self._skills
+            )
+            full_prompt += f"\n\n## 可用 Skills\n{skill_lines}"
+        self.cm = ConversationMemory(self.llm, system_prompt=full_prompt)  # ⑧ 短期记忆
 ```
 
-**为什么这样设计初始化顺序**：
+**相比 multi-agent 时代的三个变化**：
 
-1. 先创建无依赖的基础设施（LLM、ChromaDB）
-2. 再创建依赖基础设施的能力模块（LTM、KB，需要 ES + LLM）
-3. PM 独立（不需要 ES 和 LLM）
-4. 收集所有工具（各组件 `get_tools()` 自供）
-5. 注册工具（ToolRegistry 需要 ES）
-6. 最后初始化对话记忆（需要 LLM 引用做摘要压缩）
+1. **属性名 `es` → `store`**：它不再是单纯的 embedding store，而是统一的向量存储（KB/LTM/工具索引都挂在上面），改名更贴切。
+2. **Agent 不再手动收集工具**：旧版要 `builtin_tools() + ltm.get_tools() + pm.get_tools() + ...` 逐个拼装，新版直接把 `components=[ltm, pm, kb]` 丢给 ToolRegistry，由它自己加载本地工具 + Skill + MCP 三类（见 6.3）。`tools` 过滤参数和 `extra_tools` 注入随之消失——那是 multi-agent 用来给不同 Worker 配工具子集的，单 Agent 场景用不上了。
+3. **索引自建下沉到组件**：LTM/KB 各自在 `__init__` 里建索引（见 4.5/4.6），Agent 不再显式调 `build_kb_index()`；ToolRegistry 也在 `__init__` 里 `build_tool_index()`。
+
+**初始化顺序**：
+
+1. 先创建无依赖的基础设施（LLM、ChromaDBStore）
+2. 再创建依赖基础设施的组件（LTM、KB 需要 store + LLM；PM 独立）
+3. ToolRegistry 汇总三类工具并自建工具索引
+4. `scan_skills()` 扫出 Skill 列表，注入 system prompt
+5. 最后初始化对话记忆（需要完整的 prompt 做摘要压缩）
 
 #### 4.2.2 主循环 `chat()`
 
@@ -349,12 +383,12 @@ class Agent:
 def chat(self, user_input: str, verbose: bool = True) -> str:
     self.cm.add_user(user_input)          # ① 将用户输入加入对话历史
 
-    for _ in range(self._MAX_ROUNDS):     # ② 最多 50 轮迭代
+    for _ in range(self._max_rounds):     # ② 最多 50 轮迭代
         response = self.llm.chat(
             self.cm.get_messages(),
             tools=self.tr.get_definitions(  # ③ 动态工具发现
                 query=user_input,
-                always_include=self._always_include(),
+                always_include=self._compute_always_include(),
             ),
         )
         msg = response.choices[0].message
@@ -364,7 +398,9 @@ def chat(self, user_input: str, verbose: bool = True) -> str:
             self._execute_tools(msg.tool_calls, verbose)
         else:                              # ⑤ LLM 直接回复
             self.cm.add_assistant(msg)
-            return msg.content
+            return _sanitize(msg.content or "")
+
+    return "达到最大轮次，停止。"
 ```
 
 **关键设计决策**：
@@ -373,52 +409,27 @@ def chat(self, user_input: str, verbose: bool = True) -> str:
 
 - **动态工具发现**（Tool Discovery）：工具总数 ≤ 5（`top_k`）时全量返回；> 5 时按语义相似度筛选最相关的工具。这解决了"工具太多塞不进 prompt"的问题——只把 LLM 当前需要的工具定义发给它。
 
-- **always_include 机制**：基础设施工具（`recall_memory`、`check_plan`、`make_plan`、`complete_step`、`save_memory`、`search_docs` 等）始终包含在工具列表中，无论是否与当前查询相关。因为这些工具是 LLM 需要"想起来用"的，不能因为语义不匹配就被过滤掉。
+- **always_include 机制**：`_CRITICAL_TOOLS` 集合（`recall_memory`、`save_memory`、`make_plan`、`complete_step`、`search_docs`、`Skill`、`fetch__fetch` 等）始终包含在工具列表中，无论是否与当前查询相关。因为这些工具是 LLM 需要"想起来用"的，不能因为语义不匹配就被过滤掉。
 
-- **`_MAX_ROUNDS = 50`**：安全上限。如果 LLM 在 50 轮内没有给出最终回复（陷入工具调用循环），强制终止。实际正常使用中很少超过 10 轮。
+- **`_sanitize()` 清洗**：`msg.content` 输出前过一遍 `_SURROGATE_RE` 清理，防止 WSL 终端中文输入产生的代理字符碎片导致 print 崩溃。
 
-#### 4.2.3 工具执行路由
+- **`max_rounds` 默认 50**：安全上限。如果 LLM 在 50 轮内没有给出最终回复（陷入工具调用循环），返回"达到最大轮次，停止。" 实际正常使用中很少超过 10 轮。
 
-```python
-def _execute_tools(self, tool_calls, verbose):
-    names = [tc.function.name for tc in tool_calls]
-    if all(n == "delegate_task" for n in names):
-        self._execute_parallel(tool_calls, verbose)  # 并行
-    else:
-        self._execute_serial(tool_calls, verbose)    # 串行
-```
-
-**路由逻辑**：当且仅当所有工具调用都是 `delegate_task` 时走并行路径。这是因为：
-- `delegate_task` 调用的是独立 Worker，彼此无依赖，可以并行
-- 普通工具调用可能有依赖关系（比如先 `recall_memory` 再基于记忆做 `search_docs`），必须串行
-
-#### 4.2.4 并行执行机制
+#### 4.2.3 工具执行
 
 ```python
-def _execute_parallel(self, tool_calls, verbose):
-    with ThreadPoolExecutor() as pool:
-        futures = {}
-        for tc in tool_calls:
-            args = json.loads(tc.function.arguments)
-            futures[pool.submit(self.tr.execute, tc.function.name, args)] = tc
-
-        for f in as_completed(futures):
-            tc = futures[f]
-            try:
-                result = f.result()
-            except Exception as e:
-                result = json.dumps({"error": f"Worker 执行失败: {e}"})
-            self.cm.add_tool_result(tc.id, result)
+def _execute_tools(self, tool_calls, verbose: bool):
+    for tc in tool_calls:
+        result = self.tr.execute(                    # 统一执行，不区分类型
+            tc.function.name,
+            json.loads(tc.function.arguments),
+        )
+        self.cm.add_tool_result(tc.id, result)       # 结果回填对话历史
+        if verbose:
+            print(f"🔧 [{tc.function.name}] → {_sanitize(result)}")
 ```
 
-**为什么用 ThreadPoolExecutor 而非 ProcessPoolExecutor**：
-- Worker 执行的主要工作是 LLM API 调用（I/O 密集型而非 CPU 密集型），线程切换开销小
-- 线程间共享内存，Worker 的 Agent 实例直接用 Python 对象传递
-- 无需序列化/反序列化（多进程需要 pickle）
-
-**为什么不需要锁**：每个 Worker 是独立创建的 `Agent` 实例，有自己的 `ConversationMemory`、`LongTermMemory`、`ChromaDBStore`，不存在共享状态竞争。
-
-**`as_completed` 而非 `wait`**：`as_completed` 先完成的先处理，用户能更快看到部分结果，体验更好。
+**一律串行执行**。agent-extension 是单 Agent 优先，移除了 multi-agent 时代的 `delegate_task` 并行路由（`_execute_parallel` + ThreadPoolExecutor）——那是 Worker 协作的特性，随 Orchestrator/Worker 一起归入第五层（见 5.3.4）。这里工具执行不再区分类型：本地工具、Skill、MCP 工具都通过 `tr.execute()` 统一执行，ToolRegistry 内部负责分发到正确的实现。
 
 ### 4.3 LLM 客户端 — `llm.py`
 
@@ -429,12 +440,14 @@ class LLMClient:
             api_key=os.getenv("DEEPSEEK_API_KEY"),
             base_url="https://api.deepseek.com",
         )
-        self.model = "deepseek-chat"
+        self.model = "deepseek-v4-flash"
 
-    def chat(self, messages: list[dict], tools: list[dict] | None = None):
+    def chat(self, messages: list[dict], tools: list[dict] | None = None,
+             thinking: bool = True):
         kwargs = dict(model=self.model, messages=messages)
         if tools:
             kwargs["tools"] = tools
+        kwargs["extra_body"] = {"thinking": {"type": "enabled" if thinking else "disabled"}}
         return self._client.chat.completions.create(**kwargs)
 ```
 
@@ -442,7 +455,8 @@ class LLMClient:
 
 - **从函数升级为类**：api-basics 中是工厂函数 `get_client()`，到了 Agent 框架变为 `LLMClient` 类。因为 Agent 有多处需要调 LLM（主循环、摘要压缩、记忆合并、consolidate），用一个稳定的实例更方便。
 - **每次调用都是新实例**：与 api-basics 一样，每个 Agent 创建自己的 `LLMClient`。不做全局单例是因为 DeepSeek API 是无状态的 HTTP 调用，没有连接池的概念。
-- **model 字段而非参数**：`self.model = "deepseek-chat"` 硬编码在类内部。备选模型 `deepseek-reasoner` 注释在文件顶部。
+- **`thinking` 参数**：DeepSeek V4 起 `deepseek-chat` / `deepseek-reasoner` 旧别名统一指向 `deepseek-v4-flash`，思考/非思考两模式改用 `thinking` 参数切换（默认思考）。通过 `extra_body` 透传 `{"thinking": {"type": "enabled"}}`，思考模式下响应会额外返回 `reasoning_content` 字段（见 4.4）。
+- **model 字段而非参数**：`self.model = "deepseek-v4-flash"` 硬编码在类内部。备选模型 `deepseek-v4-pro` 注释在文件顶部。
 
 ### 4.4 短期记忆 — `memory.py`
 
@@ -450,19 +464,21 @@ class LLMClient:
 
 ```python
 class ConversationMemory:
-    def __init__(self, llm_client, system_prompt, max_tokens=100000):
-        self._messages = []
+    def __init__(self, llm_client, system_prompt: str, max_tokens: int = 100000):
+        self._messages: list[dict] = []
+        self.max_tokens = max_tokens
         self._llm = llm_client
         self._summary = ""   # 当前摘要文本
         self.add_system(system_prompt)
 ```
 
-消息以 OpenAI 原生格式存储：
+消息以 OpenAI 原生格式存储（思考模式下 assistant 消息还带 `reasoning_content`）：
 ```python
 [
     {"role": "system", "content": "你是一个有用的 AI 助手..."},
     {"role": "user", "content": "你好"},
-    {"role": "assistant", "content": None, "tool_calls": [...]},
+    {"role": "assistant", "content": None, "reasoning_content": "...",
+     "tool_calls": [...]},
     {"role": "tool", "tool_call_id": "call_xxx", "content": "..."},
     ...
 ]
@@ -471,6 +487,8 @@ class ConversationMemory:
 **设计要点**：
 
 - **与 API 格式对齐**：消息格式直接对应 OpenAI Chat Completions API 的 messages 参数，无需转换，避免映射错误。
+- **`reasoning_content` 回传**：V4 思考模式下 assistant 消息带 `reasoning_content`（模型的思考过程）。API 规定带 tool_calls 的回合必须把 `reasoning_content` 原样回传，否则 400，所以 `add_assistant` 会把它存进消息里。
+- **`_strip_nones` 清理**：`get_messages()` 返回前去掉值为 `None` 的字段（如无思考时的 `reasoning_content`、无工具时的 `tool_calls`），避免 API 拒收 None。
 - **System prompt 只设一次**：在 `__init__` 中通过 `add_system()` 设置后，不再重建或修改。所有动态内容（LTM 信息、计划状态、摘要）通过工具调用或 messages 中的 assistant 消息注入，不修改 system prompt。
 - **摘要作为 assistant 消息**：裁剪后的摘要以 `{"role": "assistant", "content": "[对话摘要] ..."}` 形式插入 messages 历史中。这样对 LLM 的 prompt cache 友好——system prompt 不变，摘要作为历史的一部分自然流动。
 
@@ -485,6 +503,8 @@ def _count_tokens(self, messages):
     for m in messages:
         total += self._MSG_OVERHEAD
         total += len(self._enc.encode(m.get("content") or ""))
+        reasoning = m.get("reasoning_content") or ""
+        total += len(self._enc.encode(reasoning))
         if m.get("tool_calls"):
             for tc in m["tool_calls"]:
                 fn = tc.get("function", {})
@@ -500,6 +520,7 @@ def _count_tokens(self, messages):
 - **tiktoken 精确计数**：替代早期版本的 `len(chars) // 2` 粗略估算。`cl100k_base` 编码对中英文混合内容能做到 ±2% 的精度。
 - **`MSG_OVERHEAD = 4`**：OpenAI API 在每条消息前后添加特殊 token（如 `<|im_start|>` 等），大约 3-4 个 token。这个常量是对 API 格式开销的近似补偿。
 - **tool_calls 也计入**：工具调用的函数名和参数 JSON 字符串都会送到 LLM，必须计入 token 统计。
+- **`reasoning_content` 也计入**：思考模式下模型的思考过程同样占 token，且会随消息回传，必须纳入计数，否则摘要裁剪的触发时机判断会失真。
 
 #### 4.4.3 自动摘要压缩
 
@@ -600,11 +621,15 @@ def add(self, collection, text, meta=None):
 **`rebuild()` — 批量重建**：
 ```python
 def rebuild(self, collection, items):
-    self._client.delete_collection(collection)  # 先删
-    col = self._client.create_collection(...)    # 再建
+    self._client.delete_collection(collection)   # 先删（不存在也不报错）
+    col = self._client.create_collection(
+        collection,
+        embedding_function=self._ef,
+        metadata={"hnsw:space": "cosine"},       # 显式指定余弦距离
+    )
     col.add(documents=texts, metadatas=metas, ids=ids)  # 批量写
 ```
-用于 KB 和 ToolRegistry 的 `build_xxx_index(force=True)`。
+用于 KB 和 ToolRegistry 的 `build_xxx_index(force=True)`。显式指定 `hnsw:space = cosine`，让 ChromaDB 的 HNSW 索引用余弦距离构建，与 `search()` 里 `1.0 - distance` 的换算保持一致。
 
 **`search()` — 语义检索**：
 ```python
@@ -780,7 +805,7 @@ class PlanManager:
 }
 ```
 
-状态标记：`○` 未开始、`→` 进行中、`✓` 已完成。
+状态标记：`○` 未开始、`→` 进行中、`✓` 已完成。`current_step` 是**0-based 索引**指向当前进行中的步骤（新建计划时全为 `○`、`current_step = 0`），而 `complete_step(step)` 接收的是 1-based 编号（内部 `idx = step - 1` 换算），完成一步后指针推进并把下一步标为 `→`。
 
 #### 4.7.2 关键操作
 
@@ -831,22 +856,19 @@ while dest.exists():
 }
 ```
 
-**工具来源**：
+**工具来源**（agent-extension 的三层）：
 | 来源 | 工具数 | 工具 |
 |------|--------|------|
-| `builtin_tools()` | 3 | `get_weather`, `search_web`, `calculate` |
-| `LTM.get_tools()` | 2 | `save_memory`, `recall_memory` |
-| `PM.get_tools()` | 6 | `check_plan`, `make_plan`, `complete_step`, `add_plan_step`, `modify_plan_step`, `clear_plan` |
-| `KB.get_tools()` | 1 | `search_docs` |
-| `extra_tools`（Orch） | 1 | `delegate_task` |
-| **总计（Full Agent）** | **12** | |
-| **总计（Orchestrator）** | **13** | |
+| 本地工具（`local_tools.py`） | 10 | `calculate` + `save_memory`/`recall_memory`（LTM）+ 6 个计划工具（PM）+ `search_docs`（KB） |
+| Skill（入口工具） | 1 | `Skill`（按需加载 SKILL.md） |
+| MCP（fs__ / fetch__ / git__） | 若干 | 各 Server `discover()` 发现的远程工具 |
 
-#### 4.8.2 工具体系重构（multi-agent Round 01 最大改动）
+三类工具最终都收敛成 OpenAI Function Calling 格式的一条定义，进入同一个 `_tools` 字典，Agent 不区分来源（详见 6.3）。
 
-**旧方案**（agent-advanced / rag-agent）：
+#### 4.8.2 工具体系的三次演进
+
+**第一代（agent-advanced / rag-agent）——集中创建，闭包绑定**：
 ```python
-# 集中创建，闭包绑定
 def create_demo_tools(pm, ltm, kb):
     tools = []
     tools.append({"name": "save_memory", ..., "fn": lambda content: ltm.add(content)})
@@ -855,18 +877,27 @@ def create_demo_tools(pm, ltm, kb):
 ```
 问题：加工具要改三处——工具定义、stub、绑定。紧耦合。
 
-**新方案**（multi-agent）：
+**第二代（multi-agent）——组件自供工具**：
 ```python
-# 各组件自供工具
 all_tools = builtin_tools()
 all_tools.extend(self.ltm.get_tools())
 all_tools.extend(self.pm.get_tools())
 all_tools.extend(self.kb.get_tools())
 ```
-优势：
-- 组件自治：LTM 知道自己的工具需要什么功能，不需要外部绑定
-- Agent 统一 `tools: list[str] | None` 参数：`None` = 全量，`["search_docs", "calculate"]` = 只保留指定工具
-- 加新能力只需在对应组件中添加 `get_tools()` 返回项，不需要改 Agent 代码
+优势：组件自治，LTM 知道自己的工具需要什么功能；加能力只需在组件里加 `get_tools()` 项。但仍有局限——工具定义分散在各组件，多 Agent 场景还要靠 `tools` 参数过滤 Worker 工具子集。
+
+**第三代（agent-extension，当前）——local_tools 集中 + 三层注册**：
+```python
+# ToolRegistry 内部：本地工具 + Skill + MCP 统一收口
+for t in get_local_tools(components or []):   # 本地：集中在一个文件定义
+    self.register_tool(**t)
+skill_tool = get_skill_tool()                  # Skill：一个入口工具
+if skill_tool:
+    self.register_skill(skill_tool)
+for mcp in get_mcp_clients():                  # MCP：discover 后逐一注册
+    self.register_mcp(mcp)
+```
+第三代的关键变化：工具定义从「分散在各组件」收敛到「`local_tools.py` 一个文件集中定义」，组件只暴露 `_tool_*` 方法供绑定；同时把 Skill、MCP 纳入同一套注册机制。Agent 不再需要 `tools` 过滤参数——单 Agent 场景没有 Worker 工具子集的需求。
 
 #### 4.8.3 工具向量索引
 
@@ -880,13 +911,7 @@ def build_tool_index(self, force=False):
     self._es.rebuild(self._collection, items)
 ```
 
-工具的描述文本被向量化存入 ChromaDB（按 collection 隔离）。工具索引也使用 ChromaDB 分 collection：
-```
-tools               = 12 (全量 Agent)
-tools_orch          = 13 (Orchestrator)
-tools_researcher    = 3
-tools_programmer    = 2
-```
+工具的描述文本被向量化存入 ChromaDB（来源无差别，三类工具混在一个 collection）。agent-extension 单 Agent 只有一个 `tools` collection（本地 10 + Skill 1 + MCP 若干），multi-agent 时代的 `tools_orch`/`tools_researcher`/`tools_programmer` 分 collection 随 Worker 角色一起消失。
 
 每个 Agent 只在工具数 > `top_k`（5）时才做语义搜索，否则全量返回。
 
@@ -897,11 +922,13 @@ class KnowledgeBase:
     COLLECTION = "documents"
 
     def __init__(self, es, llm_client=None):
+        self._es = es
         self._tc = TokenChunker()
         self._rt = Retriever(es, llm_client, reranker=Reranker())
+        self.build_kb_index()   # 索引自建，不再由 Agent 显式调用
 ```
 
-**组合模式**：KB 本身不实现检索逻辑，而是将 TokenChunker、Retriever、Reranker 组合在一起。这是"组合优于继承"的实践。
+**组合模式**：KB 本身不实现检索逻辑，而是将 TokenChunker、Retriever、Reranker 组合在一起。这是"组合优于继承"的实践。**索引自建**：`__init__` 里直接 `build_kb_index()`，与 LTM 的 `build_ltm_index()` 对称，core.py 不再插手索引构建。
 
 **build/index 模式**：
 ```python
@@ -923,14 +950,15 @@ def build_kb_index(self, path="data/", force=False):
 - 后续调用（force=False）：检测到 ChromaDB 已有数据，只重建 BM25 内存索引（BM25 存在 Python 内存中，重启后需重建）
 - `force=True`：删除 ChromaDB collection 重建，用于数据文件更新后
 
-### 4.10 纯工具 — `demo_tools.py`
+### 4.10 本地工具 — `local_tools.py`
 
-三个模拟工具：
-- **get_weather**：硬编码城市天气字典（北京/上海/东京/纽约）
-- **search_web**：硬编码搜索字典（特斯拉股价/茅台股价/图灵奖/东京人口）
+本地工具集中定义在 `tool_infra/local_tools.py`，核心是一个纯函数工具：
+
 - **calculate**：`eval(expression)`，支持数学表达式
 
-这些工具的学习目的不是实现真实功能，而是演示 Agent 的 Function Calling 流程。
+其余本地工具都是组件的绑定方法（`ltm._tool_save`、`pm._tool_make_plan`、`kb._tool_search_docs` 等），`get_local_tools(components)` 接收 `[LTM, PM, KB]` 后统一组装。
+
+对比 multi-agent 时代的 `demo_tools.py`，agent-extension 移除了 `get_weather`、`search_web` 两个占位工具——它们只是演示 Function Calling 流程用的假数据，真实的外部信息获取已经由 MCP 的 `fetch__fetch`、`git__*` 等远程工具承接，不再需要本地硬编码字典。
 
 ---
 
@@ -1047,6 +1075,36 @@ def _tool_delegate(self, worker_name: str, task: str) -> str:
 3. **Worker 创建失败处理**：如果 worker_name 不在 ROLES 中，返回错误 JSON，不影响当前对话。
 
 4. **Worker 执行异常处理**：`try/except` 包裹，异常返回错误 JSON，不影响其他并行 Worker。
+
+#### 5.3.4 多个 delegate_task 的并行执行
+
+当 LLM 一次性调用多个 `delegate_task`（彼此独立的子任务）时，主循环走并行路径：
+
+```python
+def _execute_parallel(self, tool_calls, verbose):
+    with ThreadPoolExecutor() as pool:
+        futures = {}
+        for tc in tool_calls:
+            args = json.loads(tc.function.arguments)
+            futures[pool.submit(self.tr.execute, tc.function.name, args)] = tc
+
+        for f in as_completed(futures):
+            tc = futures[f]
+            try:
+                result = f.result()
+            except Exception as e:
+                result = json.dumps({"error": f"Worker 执行失败: {e}"})
+            self.cm.add_tool_result(tc.id, result)
+```
+
+**为什么用 ThreadPoolExecutor 而非 ProcessPoolExecutor**：
+- Worker 执行的主要工作是 LLM API 调用（I/O 密集型而非 CPU 密集型），线程切换开销小
+- 线程间共享内存，Worker 的 Agent 实例直接用 Python 对象传递
+- 无需序列化/反序列化（多进程需要 pickle）
+
+**为什么不需要锁**：每个 Worker 是独立创建的 `Agent` 实例，有自己的 `ConversationMemory`、`LongTermMemory`、`ChromaDBStore`，不存在共享状态竞争。
+
+**`as_completed` 而非 `wait`**：`as_completed` 先完成的先处理，用户能更快看到部分结果，体验更好。
 
 ### 5.4 Worker 角色 — `roles.py`
 
@@ -1337,7 +1395,7 @@ api-basics ──→ rag-basics ──→ agent-basics ──→ agent-advanced 
 | **渐进式构建** | 7 个子项目接力，每回合只加一个核心能力 |
 | **手写核心** | 不依赖 LangChain/CrewAI/AutoGen，所有底层机制自己实现 |
 | **组合优于继承** | KB 组合 Chunker+Retriever+Reranker；Agent 组合 LTM+PM+KB+ToolRegistry |
-| **组件自治** | 各能力模块自供工具（`get_tools()`），Agent 只做收集和路由 |
+| **组件自治** | 各能力模块自建索引、暴露 `_tool_*` 方法，工具定义由 local_tools.py 集中组装 |
 | **单一职责** | 每个文件/类做一件事：llm.py 只管 API，memory.py 只管对话历史，plan_manager.py 只管计划 |
 | **配置硬编码** | 底层参数（模型名、base_url、chunk 大小）不暴露为构造函数参数 |
 | **隔离先行** | Worker 按需创建、独立上下文、用完 GC，互不干扰 |
