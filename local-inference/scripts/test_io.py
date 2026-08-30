@@ -23,7 +23,7 @@ client = OpenAI(
 )
 
 MODEL = "qwen2.5:3b"
-PROMPT = "你好，用一句话介绍你自己"
+PROMPT = "给我解释一下排序算法的基本原理。"
 
 
 def main():
