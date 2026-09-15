@@ -17,6 +17,12 @@ ollama run qwen2.5:3b
 # 单轮 I/O 测试（OpenAI 兼容接口）
 pip install -r requirements.txt
 python scripts/test_io.py
+
+# KV cache 显存计算（纯本地，无需服务）
+python scripts/kv_cache_calc.py
+
+# KV cache 显存实测（需 Ollama + nvidia-smi）
+python scripts/kv_cache_measure.py
 ```
 
 ## 注意
