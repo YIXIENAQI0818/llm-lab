@@ -21,7 +21,7 @@ for _k in ("all_proxy", "ALL_PROXY", "http_proxy", "HTTP_PROXY",
 os.environ["no_proxy"] = os.environ["NO_PROXY"] = "*"
 
 # 让脚本可从 finetune/ 目录 import 框架代码
-ROOT = Path(__file__).resolve().parent.parent  # agent-extension/
+ROOT = Path(__file__).resolve().parent.parent.parent  # agent-extension/
 sys.path.insert(0, str(ROOT))
 
 import chromadb
@@ -32,7 +32,7 @@ from src.agent_framework.llm import LLMClient
 _TRAIN_N = 500        # 训练对数量（备选：300 小规模 / 1000 较大规模）
 _TEST_N = 100         # 测试对数量
 _SEED = 42            # 采样随机种子，保证可复现
-_DATA_DIR = Path(__file__).resolve().parent / "data"
+_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
 QUERY_PROMPT = (
     "你是一个检索测试集构造助手。下面是一段知识库文档片段。\n"

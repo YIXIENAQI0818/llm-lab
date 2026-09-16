@@ -28,8 +28,8 @@ from sentence_transformers.training_args import BatchSamplers
 
 # ---- 底层参数（模块内硬编码）----
 _BASE_MODEL = "BAAI/bge-small-zh-v1.5"
-_DATA_DIR = Path(__file__).resolve().parent / "data"
-_OUTPUT_DIR = Path(__file__).resolve().parent / "models" / "bge-kb-v1"
+_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+_OUTPUT_DIR = Path(__file__).resolve().parent.parent / "models" / "bge-kb-v1"
 
 _NUM_EPOCHS = 3          # 500 对 / batch16 ≈ 32 step/epoch，3 epoch ≈ 94 step
 _BATCH_SIZE = 16

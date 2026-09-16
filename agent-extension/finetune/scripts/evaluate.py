@@ -18,7 +18,7 @@ from sentence_transformers import SentenceTransformer
 from sentence_transformers.evaluation import InformationRetrievalEvaluator
 
 _BASE_MODEL = "BAAI/bge-small-zh-v1.5"
-_ROOT = Path(__file__).resolve().parent
+_ROOT = Path(__file__).resolve().parent.parent
 _DATA_DIR = _ROOT / "data"
 _MODEL_DIR = _ROOT / "models" / "bge-kb-v1"
 
