@@ -12,6 +12,11 @@ from chromadb import EmbeddingFunction, PersistentClient
 from sentence_transformers import SentenceTransformer
 
 
+# embedding 模型选择:
+#   默认 BAAI/bge-small-zh-v1.5（通用中文，本地缓存）
+#   微调后可用 finetune/models/bge-kb-v1（KB 领域适配，见 finetune/ 目录）
+_MODEL_NAME = "BAAI/bge-small-zh-v1.5"
+
 _singleton_model = None
 
 
@@ -19,7 +24,7 @@ def _get_model():
     global _singleton_model
     if _singleton_model is None:
         _singleton_model = SentenceTransformer(
-            "BAAI/bge-small-zh-v1.5", local_files_only=True,
+            _MODEL_NAME, local_files_only=True,
         )
     return _singleton_model
 

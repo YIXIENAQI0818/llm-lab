@@ -4,3 +4,5 @@ agent_memory/
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
+finetune/models/
+finetune/data/
