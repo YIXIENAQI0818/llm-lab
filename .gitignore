@@ -11,3 +11,5 @@ agent_memory/
 **/agent_memory/
 chroma_data/
 **/chroma_data/
+outputs/
+**/outputs/
